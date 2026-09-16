@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建产物
+apps/windows/dist/
+apps/windows/release/
+apps/windows/release*/
+backend/target/
+
+# 工作区私有数据与工具临时文件
+.workbuddy/
+tools/*.txt
+tools/ssh-config
+tools/known_hosts
+
+# 杂项
+Thumbs.db
+.DS_Store
+*.log
+java-check.txt
+.env-check.txt

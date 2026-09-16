@@ -1,0 +1,20 @@
+server:
+  port: ${TIMEMARK_SERVER_PORT:8080}
+
+spring:
+  application:
+    name: timemark-server
+  datasource:
+    url: ${TIMEMARK_DB_URL:jdbc:mysql://sh-cynosdbmysql-grp-2gf1ewak.sql.tencentcdb.com:28451/timemark?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${TIMEMARK_DB_USER:root}
+    password: ${TIMEMARK_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+  sql:
+    init:
+      mode: always          # schema.sql 全部为 CREATE TABLE IF NOT EXISTS，幂等
+      continue-on-error: false
+
+app:
+  jwt-ttl-sec: 604800       # 7 天，§1
