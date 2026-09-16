@@ -1,6 +1,6 @@
 {
   "name": "timemark-windows",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "TimeMark 时光标 - Windows 桌面端（M1 本地版）",
   "main": "dist/main/electron/main.js",
