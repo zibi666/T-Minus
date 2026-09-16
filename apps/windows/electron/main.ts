@@ -1,12 +1,23 @@
 // Electron 主进程：窗口 / 托盘 / IPC / 通知 / 计时循环
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, Notification, dialog, nativeTheme, shell } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { LocalDB, uuid } from './db';
 import { TimerEngine } from './timerEngine';
 import { gatherExport } from './exporter';
 import { todayInTz } from './dateLogic';
 import { CreateTimerInput, UpdateTimerPatch, TickPayload } from '../src/shared/types';
 import { SyncClient } from './syncClient';
+
+// ---- 数据目录开关（§8 M2 双实例同步验收）----
+// 设置 TIMEMARK_DATA_DIR 后，本实例的数据库 / localStorage / 会话数据全部落在该目录，
+// 与默认实例完全隔离；两个实例可同账号同时运行做同步对测。必须在 ready 之前调用 setPath。
+const dataDirOverride = process.env.TIMEMARK_DATA_DIR ? path.resolve(process.env.TIMEMARK_DATA_DIR) : '';
+if (dataDirOverride) {
+  try { fs.mkdirSync(dataDirOverride, { recursive: true }); } catch { /* 已存在 */ }
+  app.setPath('userData', dataDirOverride);
+  app.setPath('sessionData', path.join(dataDirOverride, 'Session Data'));
+}
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -190,6 +201,7 @@ function registerIpc(): void {
   ipcMain.handle('sync:now', () => sync.syncNow());
   ipcMain.handle('sync:status', () => sync.lastStatusInfo());
   ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:data-dir', () => ({ dir: app.getPath('userData'), overridden: !!dataDirOverride }));
   ipcMain.handle('update:check', () => checkUpdate());
   ipcMain.handle('update:open', async () => {
     const url = lastUpdateInfo?.url || RELEASES_URL;

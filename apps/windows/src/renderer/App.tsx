@@ -35,9 +35,11 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latest: string; current: string } | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [appVer, setAppVer] = useState('');
+  const [dataDir, setDataDir] = useState<{ dir: string; overridden: boolean } | null>(null);
   useEffect(() => {
     window.timemark.onUpdateStatus(setUpdateInfo);
     window.timemark.appVersion().then(setAppVer).catch(() => {});
+    window.timemark.dataDir().then(setDataDir).catch(() => {});
   }, []);
   const doCheckUpdate = useCallback(async () => {
     setUpdateChecking(true);
@@ -401,6 +403,7 @@ export default function App() {
         onLogout={handleLogout}
         onLogin={() => setLoginOpen(true)}
         currentVersion={appVer}
+        dataDir={dataDir}
         update={{ checking: updateChecking, info: updateInfo }}
         onCheckUpdate={doCheckUpdate}
         onOpenRelease={doOpenRelease}

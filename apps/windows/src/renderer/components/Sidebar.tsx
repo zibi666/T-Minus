@@ -31,6 +31,7 @@ interface Props {
   onLogout: () => void;
   onLogin: () => void;
   currentVersion: string;
+  dataDir: { dir: string; overridden: boolean } | null;
   update: { checking: boolean; info: { hasUpdate: boolean; latest: string } | null };
   onCheckUpdate: () => void;
   onOpenRelease: () => void;
@@ -200,6 +201,12 @@ export default function Sidebar(p: Props) {
                 <button className="danger" onClick={() => { setMenuOpen(false); p.onLogout(); }}>
                   <IconLogout size={12} /> <span>退出登录</span>
                 </button>
+              )}
+              {p.dataDir && (
+                <div className="menu-info" title={p.dataDir.dir}>
+                  数据目录 · {p.dataDir.dir.split(/[\\/]/).filter(Boolean).pop()}
+                  {p.dataDir.overridden ? '（TIMEMARK_DATA_DIR）' : '（默认）'}
+                </div>
               )}
             </div>
           </>

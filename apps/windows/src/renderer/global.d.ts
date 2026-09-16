@@ -21,6 +21,7 @@ declare global {
       winControl(action: 'minimize' | 'maximize' | 'close'): Promise<void>;
       exportData(): Promise<{ ok: boolean; filePath?: string }>;
       appVersion(): Promise<string>;
+      dataDir(): Promise<{ dir: string; overridden: boolean }>;
       checkUpdate(): Promise<{ hasUpdate: boolean; latest: string; current: string; url: string; checkedAt: number }>;
       openReleasePage(): Promise<{ ok: boolean; url: string }>;
       onUpdateStatus(cb: (s: { hasUpdate: boolean; latest: string; current: string; url: string; checkedAt: number }) => void): () => void;

@@ -21,6 +21,7 @@ const api = {
   winControl: (action: 'minimize' | 'maximize' | 'close') => ipcRenderer.invoke('win:' + action),
   exportData: () => ipcRenderer.invoke('data:export'),
   appVersion: () => ipcRenderer.invoke('app:version'),
+  dataDir: () => ipcRenderer.invoke('app:data-dir'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   openReleasePage: () => ipcRenderer.invoke('update:open'),
   onUpdateStatus: (cb: (s: unknown) => void) => {

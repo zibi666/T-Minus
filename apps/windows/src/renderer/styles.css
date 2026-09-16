@@ -208,6 +208,12 @@ body {
 }
 .sync-menu button:hover { color: var(--text-hi); }
 .sync-menu button.danger { color: var(--danger); }
+.sync-menu .menu-info {
+  padding: 6px 10px 4px; font-size: 11px; color: var(--text-low);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: 4px;
+}
+.sync-menu .menu-info[title*="TIMEMARK_DATA_DIR"] { color: #4DC9F0; }
 
 /* ================= 通用交互图层 =================
    hover / active 的颜色变化不走 background 过渡（非合成器属性，软件渲染下生硬），
