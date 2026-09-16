@@ -312,6 +312,8 @@ body {
 .win-controls {
   display: flex; align-items: center; gap: 2px;
   flex: none;
+  align-self: flex-start;      /* 顶到标题行上缘 */
+  margin-top: -4px;
   -webkit-app-region: no-drag;
   margin-left: 12px;
   margin-right: -24px; /* 贴向窗口右上角（抵消主区右内边距） */
@@ -473,7 +475,9 @@ body {
   position: relative; z-index: 1;
   flex: 1; min-height: 0; overflow-y: auto;
   scrollbar-gutter: stable;
-  padding-right: 8px;
+  /* 向右扩展到窗口边缘附近：滚动条贴右缘，内容宽度用内边距补偿 */
+  margin-right: -30px;
+  padding-right: 34px;
   display: flex; flex-direction: column; gap: 14px;
   animation: rise-in 0.4s var(--dur-flip) both;
 }

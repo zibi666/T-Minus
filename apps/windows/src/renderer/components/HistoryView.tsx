@@ -6,8 +6,8 @@ import { isPomodoro, getPomodoro, startOfToday, localDateKey, getSegName, setSeg
 import { IconClose, IconArrowRight, IconTrash } from './icons';
 import Select from './Select';
 
-/** 分段占比条用色（规范 §4.3：cyan / violet / mint 轮替） */
-const BAR_COLORS = ['#4DC9F0', '#9381FF', '#21E0C4'];
+/** 分段占比条用色：8 色轮替，相邻段（含跨循环相邻）均不同色 */
+const BAR_COLORS = ['#4DC9F0', '#9381FF', '#21E0C4', '#FFB224', '#FF6B6B', '#5A9EFF', '#F472B6', '#A3E635'];
 
 type RangeKey = 'today' | '7d' | '30d' | 'all';
 type KindKey = 'all' | 'pomodoro' | 'precise' | 'stopwatch' | 'date';
