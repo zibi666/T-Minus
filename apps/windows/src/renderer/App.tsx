@@ -218,6 +218,7 @@ export default function App() {
     const since = startOfToday();
     let focusMs = j.workMs;
     let marks = 0;
+    let extraRounds = 0; // 非番茄钟的完整计时次数（倒计时到点 / 正计时结算）
     const daySet = new Set<string>();
     for (const r of records) {
       daySet.add(localDateKey(r.endedAt));
@@ -227,6 +228,7 @@ export default function App() {
         focusMs += r.durationSec * 1000;
       } else if (!pomoIds.has(r.timerId)) {
         focusMs += r.durationSec * 1000; // 番茄钟专注走 journal，避免休息段混入
+        extraRounds += 1; // 完整跑完一次也计一轮专注
       }
     }
     for (const k of Object.keys(journal)) {
@@ -239,7 +241,7 @@ export default function App() {
       streak++;
       cursor.setDate(cursor.getDate() - 1);
     }
-    return { focusMs, rounds: j.workCount, marks, streak };
+    return { focusMs, rounds: j.workCount + extraRounds, marks, streak };
   }, [records, timers, journal]);
 
   // ---- 用户动作 ----
