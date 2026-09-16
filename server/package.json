@@ -1,0 +1,14 @@
+{
+  "name": "timemark-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TimeMark 同步服务端 —— §5 同步协议契约实现（开发/自用版）",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "sql.js": "^1.12.0"
+  }
+}

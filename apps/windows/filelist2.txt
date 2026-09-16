@@ -1,0 +1,2 @@
+﻿renderer_dir: True
+dist_renderer: index.html,index-CopDfC3z.js,index-lohx8f7e.css

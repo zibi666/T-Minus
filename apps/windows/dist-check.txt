@@ -1,0 +1,4 @@
+﻿main: electron,src
+renderer: assets,index.html
+assets: index-CopDfC3z.js,index-lohx8f7e.css
+icon: True

@@ -1,0 +1,17 @@
+﻿PASS - health
+PASS - register | {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJmZDViNTVjZi05NDAwLTQwYzgtYjgyOS0zOWM3MWY1MmFmMDUiLCJ1c2VybmFtZSI6InUxNzg5NTIzNTQxMDQ1IiwiZXhwIjoxNzkwMTI4MzQxfQ.vrRhws-u4yPmgEHbD4E4xnpi-kox1gXkuGazsucXlf0","user":{"id":"fd5b55cf-9400-40c8-b829-39c71f52af05","username":"u1789523541045"}}
+PASS - register dup 409
+PASS - login
+PASS - me
+PASS - pull unauthorized 401
+PASS - push create accepted | {"status":"accepted","reason":""}
+PASS - push duplicate | {"status":"accepted","reason":"","operation_id":"op-1","duplicate":true}
+PASS - pull has change | next=1
+PASS - stale run conflict | {"status":"conflict","reason":"stale_version"}
+PASS - run update accepted | {"status":"accepted","reason":""}
+PASS - delete accepted | {"status":"accepted","reason":""}
+PASS - tombstone wins | {"status":"conflict","reason":"tombstone_wins"}
+PASS - pull sees run+delete (2) | got 2
+PASS - record push accepted | {"status":"accepted","reason":""}
+PASS - pull sees 3 changes | got 3
+ALL PASS

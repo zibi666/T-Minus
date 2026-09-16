@@ -1,0 +1,2 @@
+﻿proc_count=0
+db_exists=True

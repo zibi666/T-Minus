@@ -1,0 +1,19 @@
+﻿  鈥?electron-builder  version=26.15.3 os=10.0.26200
+  鈥?loaded configuration  file=package.json ("build" field)
+  鈥?executing @electron/rebuild  electronVersion=37.10.3 arch=x64 buildFromSource=false workspaceRoot=E:\T-Minus\apps\windows projectDir=./ appDir=./
+  鈥?installing native dependencies  arch=x64
+  鈥?completed installing native dependencies
+  鈥?packaging       platform=win32 arch=x64 electron=37.10.3 appOutDir=release6\win-unpacked
+  鈥?downloaded      label=electron progress=100%
+  鈥?downloaded electron zip extracted successfully  output=E:\T-Minus\apps\windows\release6\win-unpacked
+  鈥?searching for node modules  pm=npm searchDir=E:\T-Minus\apps\windows
+  鈥?duplicate dependency references  dependencies=["react@18.3.1","loose-envify@1.4.0","loose-envify@1.4.0"]
+  鈥?updating asar integrity executable resource  executablePath=release6\win-unpacked\TimeMark.exe
+  鈥?signing with signtool.exe  path=release6\win-unpacked\TimeMark.exe
+  鈥?building        target=nsis file=release6\TimeMark Setup 0.1.0.exe archs=x64 oneClick=false perMachine=false
+  鈥?signing with signtool.exe  path=release6\win-unpacked\resources\elevate.exe
+  鈥?signing with signtool.exe  path=release6\TimeMark Setup 0.1.0.__uninstaller.exe
+  鈥?signing with signtool.exe  path=release6\TimeMark Setup 0.1.0.exe
+  鈥?building block map  blockMapFile=release6\TimeMark Setup 0.1.0.exe.blockmap
+  鈥?building        target=portable file=release6\TimeMark-Portable-0.1.0.exe archs=x64
+  鈥?signing with signtool.exe  path=release6\TimeMark-Portable-0.1.0.exe

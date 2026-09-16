@@ -1,0 +1,27 @@
+﻿
+> timemark-windows@0.1.0 start
+> electron .
+
+npm.cmd : E:\T-Minus\apps\windows\dist\main\electron\main.js:48
+所在位置 行:445 字符: 41
++ ... s\windows"; & "C:\Users\zibi\.workbuddy\binaries\node\versions\22.22. ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (E:\T-Minus\apps...tron\main.js:48:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+const gotLock = electron_1.app.requestSingleInstanceLock();
+                               ^
+
+TypeError: Cannot read properties of undefined (reading 'requestSingleInstanceLock')
+    at Object.<anonymous> (E:\T-Minus\apps\windows\dist\main\electron\main.js:48:32)
+    at Module._compile (node:internal/modules/cjs/loader:1714:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1848:10)
+    at Module.load (node:internal/modules/cjs/loader:1448:32)
+    at Module._load (node:internal/modules/cjs/loader:1270:12)
+    at c._load (node:electron/js2c/node_init:2:17993)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:244:24)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:186:5)
+    at node:internal/main/run_main_module:36:49
+
+Node.js v22.21.1
