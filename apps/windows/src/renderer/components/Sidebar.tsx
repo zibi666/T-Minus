@@ -3,7 +3,7 @@ import { TimerDTO, AuthInfo, SyncStatusInfo } from '../../shared/types';
 import { isPomodoro, getPomodoro, mmss } from '../helpers';
 import {
   LogoMark, IconSearch, IconArrowRight, IconPlus, IconSync, IconDownload,
-  IconLogout, IconUser, IconPin
+  IconLogout, IconUser, IconPin, IconGear
 } from './icons';
 
 export type FilterKey = 'all' | 'running' | 'paused';
@@ -151,14 +151,18 @@ export default function Sidebar(p: Props) {
         className={`sync-line ${syncCls}`}
         role="button"
         tabIndex={0}
-        onClick={() => {
-          if (menuOpen) { setMenuOpen(false); return; }
-          if (p.auth?.loggedIn) { p.onSyncNow(); } else { setMenuOpen(true); }
-        }}
-        title={p.auth?.loggedIn ? '点击立即同步' : '登录 / 注册同步账号'}
+        onClick={() => setMenuOpen((v) => !v)}
+        title="设置与更新：立即同步 / 导出备份 / 检查更新 / 退出登录"
       >
         <span className="sdot" />
-        <span>{syncText}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{syncText}</span>
+        <button
+          className={`gear-btn ${p.update.info?.hasUpdate ? 'has-update' : ''}`}
+          title="设置与更新"
+          onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+        >
+          <IconGear size={13} />
+        </button>
         {menuOpen && (
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
