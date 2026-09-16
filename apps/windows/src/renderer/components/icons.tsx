@@ -183,15 +183,18 @@ export function LogoMark({ size = 36 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id="lg-logo" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
-          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.72" />
+          <stop offset="0%" stopColor="#4DC9F0" />
+          <stop offset="100%" stopColor="#9381FF" />
         </linearGradient>
       </defs>
-      <circle cx="24" cy="24" r="15.5" stroke="url(#lg-logo)" strokeWidth="4.5" strokeLinecap="round"
-        strokeDasharray="73 24.4" transform="rotate(-90 24 24)" />
-      <path d="M24 24V15.5" stroke="url(#lg-logo)" strokeWidth="4.5" strokeLinecap="round" />
-      <path d="M24 24l6.2 4" stroke="url(#lg-logo)" strokeWidth="4" strokeLinecap="round" opacity="0.85" />
-      <circle cx="24" cy="24" r="2.6" fill="#fff" />
+      {/* 轨道 + 270° 青紫渐变倒计时环（12 点起点，圆头） */}
+      <circle cx="24" cy="24" r="15" stroke="#2C313E" strokeWidth="4.6" fill="none" />
+      <circle cx="24" cy="24" r="15" stroke="url(#lg-logo)" strokeWidth="4.6" strokeLinecap="round"
+        strokeDasharray="70.7 23.6" transform="rotate(-90 24 24)" />
+      {/* 10:10 表针 + 中心点 */}
+      <path d="M17.1 20L24 24" stroke="#F5F7FC" strokeWidth="3.6" strokeLinecap="round" />
+      <path d="M24 24l10.4-6" stroke="#F5F7FC" strokeWidth="3.4" strokeLinecap="round" />
+      <circle cx="24" cy="24" r="2.6" fill="#F5F7FC" />
     </svg>
   );
 }

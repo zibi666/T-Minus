@@ -89,9 +89,10 @@ body {
 }
 .brand-logo {
   width: 28px; height: 28px; border-radius: 9px; flex: none;
-  background: var(--accent-grad);
+  background: linear-gradient(160deg, #1B2130, #0B0E18);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   display: flex; align-items: center; justify-content: center;
-  box-shadow: var(--shadow-accent-btn), var(--inner-highlight);
+  box-shadow: var(--inner-highlight);
 }
 .brand-name { font-size: 14px; font-weight: 600; letter-spacing: 0.3px; }
 
