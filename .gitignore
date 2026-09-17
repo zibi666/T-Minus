@@ -6,6 +6,10 @@ apps/windows/dist/
 apps/windows/release/
 apps/windows/release*/
 backend/target/
+apps/android/app/build/
+apps/android/build/
+apps/android/.gradle/
+tools/android/
 
 # 工作区私有数据与工具临时文件
 .workbuddy/
