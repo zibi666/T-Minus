@@ -1,6 +1,7 @@
 package com.timemark.app.sync
 
 import com.timemark.app.data.AppContainer
+import com.timemark.app.data.AuthReq
 import com.timemark.app.data.ChangeEntry
 import com.timemark.app.data.PendingOpEntity
 import com.timemark.app.data.PushOp
@@ -22,16 +23,19 @@ class SyncManager(private val c: AppContainer) {
         private set
 
     suspend fun register(username: String, password: String): Boolean {
-        return authFlow { c.api.register(it) }
+        return authFlow(AuthReq(username, password)) { c.api.register(it) }
     }
 
     suspend fun login(username: String, password: String): Boolean {
-        return authFlow { c.api.login(it) }
+        return authFlow(AuthReq(username, password)) { c.api.login(it) }
     }
 
-    private suspend fun authFlow(call: suspend (com.timemark.app.data.AuthReq) -> com.timemark.app.data.AuthResp): Boolean {
+    private suspend fun authFlow(
+        req: AuthReq,
+        call: suspend (AuthReq) -> com.timemark.app.data.AuthResp
+    ): Boolean {
         return try {
-            val resp = call(com.timemark.app.data.AuthReq(pendingUsername, pendingPassword))
+            val resp = call(req)
             c.auth.save(resp.token, resp.user.id, resp.user.username)
             adoptOrphans(resp.user.id)
             enqueueAllForUpload(resp.user.id)
@@ -41,9 +45,6 @@ class SyncManager(private val c: AppContainer) {
             false
         }
     }
-
-    var pendingUsername: String = ""
-    var pendingPassword: String = ""
 
     suspend fun logout() {
         c.auth.clear()

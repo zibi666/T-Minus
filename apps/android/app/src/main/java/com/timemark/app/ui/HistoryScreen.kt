@@ -85,9 +85,9 @@ fun HistoryScreen(c: AppContainer, onBack: () -> Unit) {
             Spacer(Modifier.width(4.dp))
             val seen = LinkedHashMap<String, Boolean>()
             filtered.forEach { seen[colorById[it.timer_id] ?: ""] = true }
-            PALETTE.filter { cc -> seen.any { s -> s.key.equals("#%02X%02X%02X".format(cc.red.toInt().times(255), cc.green.toInt().times(255), cc.blue.toInt().times(255)), ignoreCase = true) } }
+            PALETTE.filter { cc -> seen.any { s -> s.key.equals("#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt()), ignoreCase = true) } }
                 .forEach { cc ->
-                    val hex = "#%02X%02X%02X".format(cc.red.toInt().times(255), cc.green.toInt().times(255), cc.blue.toInt().times(255))
+                    val hex = "#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt())
                     Box(Modifier.padding(2.dp).clip(RoundedCornerShape(6.dp)).clickable { colorFilter = hex }) { ColorDot(hex, 16) }
                 }
         }

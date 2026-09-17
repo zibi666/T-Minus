@@ -47,7 +47,7 @@ fun TypeBadge(type: String) {
     Text(
         typeLabel(type),
         modifier = Modifier
-            .clip(RoundedCornerShape(999))
+            .clip(RoundedCornerShape(50))
             .background(C.stroke)
             .padding(horizontal = 8.dp, vertical = 2.dp),
         color = C.textLow, fontSize = 10.5.sp
@@ -67,7 +67,7 @@ fun Chip(text: String, active: Boolean, onClick: () -> Unit) {
     Text(
         text,
         modifier = Modifier
-            .clip(RoundedCornerShape(999))
+            .clip(RoundedCornerShape(50))
             .background(if (active) C.cyan.copy(alpha = 0.18f) else C.stroke)
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 6.dp),

@@ -108,7 +108,7 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PALETTE.forEach { cc ->
-                val hex = "#%02X%02X%02X".format(cc.red.toInt().times(255), cc.green.toInt().times(255), cc.blue.toInt().times(255))
+                val hex = "#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt())
                 Box(
                     Modifier
                         .size(26.dp)

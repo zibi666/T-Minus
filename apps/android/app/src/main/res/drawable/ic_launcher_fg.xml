@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 270° 品牌环（青）+ 90° 轨道（暗） -->
+    <path
+        android:pathData="M54,33 A21,21 0 1 1 33,54"
+        android:strokeColor="#4DC9F0"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M33,54 A21,21 0 0 1 54,33"
+        android:strokeColor="#2C313E"
+        android:strokeWidth="7"
+        android:fillColor="#00000000" />
+    <!-- 10:10 表针 -->
+    <path
+        android:pathData="M54,54 L45.3,49"
+        android:strokeColor="#F5F7FC"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,54 L66.1,47"
+        android:strokeColor="#F5F7FC"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,54 m-2.8,0 a2.8,2.8 0 1 1 5.6,0 a2.8,2.8 0 1 1 -5.6,0"
+        android:fillColor="#F5F7FC" />
+</vector>

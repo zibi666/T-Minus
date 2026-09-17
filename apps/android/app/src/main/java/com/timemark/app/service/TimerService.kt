@@ -41,7 +41,7 @@ class TimerService : Service() {
 
     private fun startAsForeground() {
         val n = NotificationCompat.Builder(this, AlarmController.CHANNEL_RUNNING)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("TimeMark")
             .setContentText("计时进行中")
             .setOngoing(true)
@@ -68,7 +68,7 @@ class TimerService : Service() {
         val pair = best ?: return
         val (name, text) = pair
         val n = NotificationCompat.Builder(this, AlarmController.CHANNEL_RUNNING)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(name)
             .setContentText(text)
             .setOngoing(true)
