@@ -7,10 +7,10 @@ import { remainingDays } from './dateLogic';
 import { localDateKey } from '../src/shared/format';
 import { TimerDTO, RunState, CreateTimerInput, UpdateTimerPatch, RecordDTO, TimerMeta, DayStatDTO, UpdateResultDTO, TimerConfigView } from '../src/shared/types';
 import {
-  MONO_GUARD_MS, PARTIAL_SETTLE_MIN_MS, PHASE_FOCUS, PHASE_BREAK, PHASE_LONG_BREAK, RECORD, RUN_STATE,
+  MONO_GUARD_MS, PARTIAL_SETTLE_MIN_MS, PHASE_FOCUS, RECORD, RUN_STATE,
   TIMER_TYPES, SYNC_TABLE_COLUMNS,
   PomodoroPhase, NormalizedPomodoro, isPomodoroConfig, normalizePomodoro, phasePresetMs,
-  isLongBreakDue, tagColorFor, recordId, autoPhaseStamp, manualStamp, isRecordable, Stamp,
+  tagColorFor, recordId, autoPhaseStamp, manualStamp, isRecordable, nextPhaseOf, Stamp,
   contribute, sumContribution, EMPTY_CONTRIBUTION,
   buildPomodoroConfig, buildPreciseConfig, DEFAULT_TIMER_COLOR, Contribution
 } from '../src/shared/contract';
@@ -868,16 +868,12 @@ export class TimerEngine {
 
   /** 计算并写入下一阶段（skipPhase 与 advancePomodoro 共用，保证两端一致）；返回进入的阶段 */
   private beginNextPhase(rt: Runtime, p: NormalizedPomodoro, phase: PomodoroPhase, completedFocus: number, nowWall: number): PomodoroPhase {
-    const isFocus = phase === PHASE_FOCUS;
-    const completed = completedFocus + (isFocus ? 1 : 0);
-    const nextPhase: PomodoroPhase = isFocus
-      ? (isLongBreakDue(p, completed) ? PHASE_LONG_BREAK : PHASE_BREAK)
-      : PHASE_FOCUS;
-    const nextPreset = phasePresetMs(p, nextPhase);
-    rt.row.run_json = JSON.stringify({ phase: nextPhase, phase_ends_at: nowWall + nextPreset, completed_focus: completed } satisfies RunJson);
+    const np = nextPhaseOf(p, phase, completedFocus);
+    const nextPreset = phasePresetMs(p, np.phase);
+    rt.row.run_json = JSON.stringify({ phase: np.phase, phase_ends_at: nowWall + nextPreset, completed_focus: np.completedFocus } satisfies RunJson);
     rt.segStartRemainingMs = nextPreset;
     rt.segStartMonoNs = this.monoNs();
-    return nextPhase;
+    return np.phase;
   }
 
   /**

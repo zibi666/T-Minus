@@ -92,3 +92,12 @@ test('settle_stamp：结算时刻与取整口径（跨端统计落在同一天�
     );
   }
 });
+
+test('next_phase：番茄钟阶段推进裁决（长休息节奏不得各端各写）', () => {
+  for (const c of FIXTURE.next_phase) {
+    const p = C.normalizePomodoro({ pomodoro: { work_ms: 1500000, break_ms: 300000, long_break_ms: 900000, rounds: c.rounds } });
+    const n = C.nextPhaseOf(p, c.phase, c.completed_focus);
+    assert.deepStrictEqual({ phase: n.phase, completed_focus: n.completedFocus }, c.expect,
+      `用例：rounds=${c.rounds} ${c.phase}/${c.completed_focus}`);
+  }
+});

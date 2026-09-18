@@ -126,6 +126,30 @@ export function isLongBreakDue(p: NormalizedPomodoro, completedFocusAfterThisRou
   return completedFocusAfterThisRound > 0 && completedFocusAfterThisRound % p.rounds === 0;
 }
 
+/** 番茄钟「本阶段结束后进哪个阶段、轮次怎么变」的裁决结果 */
+export interface NextPhase {
+  phase: PomodoroPhase;
+  completedFocus: number;
+}
+
+/**
+ * 阶段推进的唯一裁决。三端各自实现一遍的话长休息节奏迟早漂移
+ * （一端每 4 轮一次长休息、另一端每 5 轮，session 又互不相同，同步后无法收敛）。
+ * 下一阶段的时长由 phasePresetMs(p, np.phase) 求，本函数只决定阶段与轮次计数。
+ */
+export function nextPhaseOf(
+  p: NormalizedPomodoro,
+  phase: PomodoroPhase | string | null | undefined,
+  completedFocus: number
+): NextPhase {
+  const isFocus = phase === PHASE_FOCUS;
+  const completed = completedFocus + (isFocus ? 1 : 0);
+  const next: PomodoroPhase = isFocus
+    ? (isLongBreakDue(p, completed) ? PHASE_LONG_BREAK : PHASE_BREAK)
+    : PHASE_FOCUS;
+  return { phase: next, completedFocus: completed };
+}
+
 /** 普通精确倒计时 config */
 export function buildPreciseConfig(presetMs: number): Record<string, unknown> {
   return { schema_version: 1, preset_ms: clamp(presetMs, [MIN_PRESET_MS, MAX_PRESET_MS], MIN_PRESET_MS) };

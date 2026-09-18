@@ -87,6 +87,23 @@ object Contract {
     fun isLongBreakDue(p: Pomodoro, completedFocusAfterThisRound: Int): Boolean =
         completedFocusAfterThisRound > 0 && completedFocusAfterThisRound % p.rounds == 0
 
+    /** 阶段推进裁决结果 */
+    data class NextPhase(val phase: String, val completedFocus: Int)
+
+    /**
+     * 番茄钟「本阶段结束后进哪个阶段、轮次怎么变」的唯一裁决。
+     * 三端各写一遍的话长休息节奏迟早漂移（一端每 4 轮一次、另一端每 5 轮），同步后无法收敛。
+     * 下一阶段时长由 phasePresetMs(p, np.phase) 求。
+     */
+    fun nextPhaseOf(p: Pomodoro, phase: String?, completedFocus: Int): NextPhase {
+        val isFocus = phase == PHASE_FOCUS
+        val completed = completedFocus + (if (isFocus) 1 else 0)
+        val next = if (!isFocus) PHASE_FOCUS
+        else if (isLongBreakDue(p, completed)) PHASE_LONG_BREAK
+        else PHASE_BREAK
+        return NextPhase(next, completed)
+    }
+
     fun tagColorFor(name: String): String {
         val sum = name.sumOf { it.code }
         return TAG_PALETTE[sum % TAG_PALETTE.size]

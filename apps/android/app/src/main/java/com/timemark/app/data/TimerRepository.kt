@@ -458,32 +458,18 @@ class TimerRepository(
         insertRecordRaw(t, Contract.autoPhaseStamp(phaseEnd, Contract.phasePresetMs(p, phase)),
             if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
             phase, run.completed_focus ?: 0)
-        val (nextPhase, nextPreset) = nextPhaseOf(p, phase, run.completed_focus)
+        val np = Contract.nextPhaseOf(p, phase, run.completed_focus)
+        val nextPreset = Contract.phasePresetMs(p, np.phase)
         val e = t.copy(
-            run_json = json.encodeToString(RunJson.serializer(), RunJson(phase = nextPhase, phase_ends_at = now + nextPreset, completed_focus = nextCompleted(phase, run.completed_focus))),
+            run_json = json.encodeToString(RunJson.serializer(), RunJson(phase = np.phase, phase_ends_at = now + nextPreset, completed_focus = np.completedFocus)),
             run_state = Types.RUNNING, version = t.version + 1, updated_at = now
         )
         db.timerDao().upsert(e)
         enqueue(PendingOpEntity(UUID.randomUUID().toString(), "timer_item", "update", e.id, rowPayload(e, true), t.version, true, now))
         // 阶段切换：重置单调基准（新阶段起点剩余 = nextPreset）
         monoBaselines[t.id] = MonoBaseline(SystemClock.elapsedRealtime(), now, nextPreset, 0)
-        return Settled(e, if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK, nextPhase)
+        return Settled(e, if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK, np.phase)
     }
-
-    /** 长休息判定与下一阶段（skipPhase 与 advancePomodoro 共用，两端一致） */
-    private fun nextPhaseOf(p: Contract.Pomodoro, phase: String, completedFocus: Int): Pair<String, Long> {
-        val isFocus = phase == Contract.PHASE_FOCUS
-        val completed = completedFocus + if (isFocus) 1 else 0
-        return if (!isFocus) Contract.PHASE_FOCUS to p.workMs
-        else {
-            val long = Contract.isLongBreakDue(p, completed)
-            (if (long) Contract.PHASE_LONG_BREAK else Contract.PHASE_BREAK) to
-                (if (long) p.longBreakMs else p.breakMs)
-        }
-    }
-
-    private fun nextCompleted(phase: String, completedFocus: Int): Int =
-        completedFocus + (if (phase == Contract.PHASE_FOCUS) 1 else 0)
 
     /** 跳过（番茄钟）：不足阈值的误触丢弃记账（与 Windows skipPhase 一致） */
     suspend fun skipPhase(id: String) = repoMutex.withLock { doSkipPhase(id) }
@@ -503,9 +489,10 @@ class TimerRepository(
                 if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
                 phase, run.completed_focus ?: 0)
         }
-        val (nextPhase, nextPreset) = nextPhaseOf(p, phase, run.completed_focus)
+        val np = Contract.nextPhaseOf(p, phase, run.completed_focus)
+        val nextPreset = Contract.phasePresetMs(p, np.phase)
         val e = old.copy(
-            run_json = json.encodeToString(RunJson.serializer(), RunJson(phase = nextPhase, phase_ends_at = now + nextPreset, completed_focus = nextCompleted(phase, run.completed_focus))),
+            run_json = json.encodeToString(RunJson.serializer(), RunJson(phase = np.phase, phase_ends_at = now + nextPreset, completed_focus = np.completedFocus)),
             run_state = Types.RUNNING, version = old.version + 1, updated_at = now
         )
         db.timerDao().upsert(e)

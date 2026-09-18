@@ -163,6 +163,23 @@ class ContractFixtureTest {
     }
 
     @Test
+    fun `番茄钟阶段推进裁决跨端一致`() {
+        for (t in arr("next_phase")) {
+            val p = Contract.normalizePomodoro(
+                ConfigJson(pomodoro = com.timemark.app.core.PomodoroConfig(
+                    work_ms = 1500000, break_ms = 300000, long_break_ms = 900000, rounds = t.intv("rounds")
+                ))
+            )
+            val np = Contract.nextPhaseOf(p, t.str("phase"), t.intv("completed_focus"))
+            val e = t.obj("expect")
+            assertEquals("rounds=${t.intv("rounds")} ${t.str("phase")}/${t.intv("completed_focus")} phase",
+                e.str("phase"), np.phase)
+            assertEquals("rounds=${t.intv("rounds")} ${t.str("phase")}/${t.intv("completed_focus")} 轮次",
+                e.intv("completed_focus"), np.completedFocus)
+        }
+    }
+
+    @Test
     fun `记录类型常量与 fixture 用值一致`() {
         // fixture 直接写字符串，本端常量必须逐字对应，否则统计与历史判定会静默失效
         assertTrue(arr("contribute").isNotEmpty())
