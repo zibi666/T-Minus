@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /** 按本地自然日聚合的专注统计（全部由已同步的 timer_record 现场推导，不再有本机私有账本） */
@@ -39,13 +40,14 @@ class TimerRepository(
         db.recordDao().observeStatRows()
     ) { timers, rows -> aggregateDaily(timers, rows) }
 
-    /** 结算串行锁：Application 循环、TimerService 每秒循环、闹钟/开机广播三处会同时调 settleDue，
-     *  不串行会把同一个到期阶段推进两次并写重复记录。 */
-    private val settleMutex = Mutex()
+    /** 变更串行锁：所有「读旧行 → 改 → 写 version+1」的入口都必须持锁。
+     *  只保护 settleDue 是不够的：用户在阶段到点那一秒点结束/分段/跳过，会与到点推进各写一条记录、
+     *  或把已经 stopped 的行留在 running；UI 开关（置顶/标签）带着陈旧 run_json 整行回写也会复活旧阶段。 */
+    private val repoMutex = Mutex()
 
     /** §3.6 单调时钟守卫：内存基准表（不持久化，进程重启后懒重建，与 Windows segStartMonoNs 一致）。
-     *  key = timerId。记录每个 running 计时器进入当前段时的单调/墙钟基准与段起点剩余/累计。 */
-    private val monoBaselines = mutableMapOf<String, MonoBaseline>()
+     *  key = timerId。Main（用户操作）与 Default（结算循环）两侧都会读写，故必须是并发容器。 */
+    private val monoBaselines = ConcurrentHashMap<String, MonoBaseline>()
 
     private data class MonoBaseline(
         val monoStart: Long,         // SystemClock.elapsedRealtime() at baseline
@@ -70,7 +72,10 @@ class TimerRepository(
 
     // ---- 元数据 CRUD ----
 
-    suspend fun createTimer(name: String, type: String, color: String?, configJson: String?, remark: String?): String {
+    suspend fun createTimer(name: String, type: String, color: String?, configJson: String?, remark: String?): String =
+        repoMutex.withLock { doCreateTimer(name, type, color, configJson, remark) }
+
+    private suspend fun doCreateTimer(name: String, type: String, color: String?, configJson: String?, remark: String?): String {
         val now = System.currentTimeMillis()
         val e = TimerItemEntity(
             id = UUID.randomUUID().toString(), user_id = auth.uid(),
@@ -87,6 +92,10 @@ class TimerRepository(
      * 不再出现「表单保存成功但什么都没变」）。
      */
     suspend fun updateMeta(
+        id: String, name: String?, type: String?, color: String?, remark: String?, configJson: String?
+    ): String? = repoMutex.withLock { doUpdateMeta(id, name, type, color, remark, configJson) }
+
+    private suspend fun doUpdateMeta(
         id: String, name: String?, type: String?, color: String?, remark: String?, configJson: String?
     ): String? {
         val old = db.timerDao().byId(id) ?: return "计时不存在"
@@ -136,7 +145,9 @@ class TimerRepository(
         return rejected
     }
 
-    suspend fun deleteTimer(id: String) {
+    suspend fun deleteTimer(id: String) = repoMutex.withLock { doDeleteTimer(id) }
+
+    private suspend fun doDeleteTimer(id: String) {
         val old = db.timerDao().byId(id) ?: return
         val now = System.currentTimeMillis()
         val e = old.copy(deleted = true, run_state = Types.IDLE, version = old.version + 1, updated_at = now)
@@ -148,7 +159,10 @@ class TimerRepository(
     suspend fun togglePin(id: String) = toggleFlag(id) { it.copy(pinned = !it.pinned) }
     suspend fun toggleStar(id: String) = toggleFlag(id) { it.copy(starred = !it.starred) }
 
-    private suspend fun toggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) {
+    private suspend fun toggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) =
+        repoMutex.withLock { doToggleFlag(id, mutate) }
+
+    private suspend fun doToggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) {
         val old = db.timerDao().byId(id) ?: return
         val now = System.currentTimeMillis()
         val e = mutate(old).copy(version = old.version + 1, updated_at = now)
@@ -175,7 +189,9 @@ class TimerRepository(
         monoBaselines.remove(timerId)
     }
 
-    suspend fun start(id: String) {
+    suspend fun start(id: String) = repoMutex.withLock { doStart(id) }
+
+    private suspend fun doStart(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.run_state == Types.RUNNING) return // 防御：已在运行不重复 start
         val cfg = Jsons.configJson(old.config_json)
@@ -199,7 +215,9 @@ class TimerRepository(
         }
     }
 
-    suspend fun pause(id: String) {
+    suspend fun pause(id: String) = repoMutex.withLock { doPause(id) }
+
+    private suspend fun doPause(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.run_state != Types.RUNNING) return // 防御：非运行态不可暂停
         val now = System.currentTimeMillis()
@@ -218,7 +236,9 @@ class TimerRepository(
         monoBaselines.remove(id) // 暂停后退出 running 段，清除单调基准（resume 时重建）
     }
 
-    suspend fun resume(id: String) {
+    suspend fun resume(id: String) = repoMutex.withLock { doResume(id) }
+
+    private suspend fun doResume(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.run_state != Types.PAUSED) return // 防御：非暂停态不可继续
         val now = System.currentTimeMillis()
@@ -248,7 +268,9 @@ class TimerRepository(
      *  - 正计时 = 记一个 lap 继续累计，segments_ms 追加；
      *  - 暂停态同样可结算；番茄钟无手动打点（用 skipPhase 跳阶段）。
      */
-    suspend fun segment(id: String) {
+    suspend fun segment(id: String) = repoMutex.withLock { doSegment(id) }
+
+    private suspend fun doSegment(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (isPomodoro(old)) return
         if (old.run_state != Types.RUNNING && old.run_state != Types.PAUSED) return
@@ -292,7 +314,9 @@ class TimerRepository(
      * IDLE 态直接返回（防幽灵记录）；不足 Contract.PARTIAL_SETTLE_MIN_MS 视为误触，不记账。
      * 番茄钟按阶段写 POMODORO_FOCUS / POMODORO_BREAK，统计与历史不再靠时长猜阶段。
      */
-    suspend fun stop(id: String) {
+    suspend fun stop(id: String) = repoMutex.withLock { doStop(id) }
+
+    private suspend fun doStop(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.run_state == Types.IDLE) return
         val now = System.currentTimeMillis()
@@ -333,7 +357,9 @@ class TimerRepository(
     }
 
     /** 归零：不记账（区别于 stop 的「如实结算已进行时长」） */
-    suspend fun reset(id: String) {
+    suspend fun reset(id: String) = repoMutex.withLock { doReset(id) }
+
+    private suspend fun doReset(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.type == Types.DATE) return
         if (old.run_state == Types.IDLE && old.run_json == null) return // 防御：已 idle 且无残留不重复 commit
@@ -346,7 +372,7 @@ class TimerRepository(
     /** 结算结果：供调用方（闹钟/前台循环）发通知，UI 之外不再静默 */
     data class Settled(val timer: TimerItemEntity, val kind: String, val phase: String? = null)
 
-    suspend fun settleDue(now: Long = System.currentTimeMillis()): List<Settled> = settleMutex.withLock {
+    suspend fun settleDue(now: Long = System.currentTimeMillis()): List<Settled> = repoMutex.withLock {
         val settled = mutableListOf<Settled>()
         for (raw in db.timerDao().runningAll()) {
             // §3.6 单调守卫：墙钟跳变 > 阈值时用 elapsedRealtime 修正 run_json，返回修正后实体
@@ -461,7 +487,9 @@ class TimerRepository(
         completedFocus + (if (phase == Contract.PHASE_FOCUS) 1 else 0)
 
     /** 跳过（番茄钟）：不足阈值的误触丢弃记账（与 Windows skipPhase 一致） */
-    suspend fun skipPhase(id: String) {
+    suspend fun skipPhase(id: String) = repoMutex.withLock { doSkipPhase(id) }
+
+    private suspend fun doSkipPhase(id: String) {
         val old = db.timerDao().byId(id) ?: return
         if (old.run_state != Types.RUNNING) return
         if (!isPomodoro(old)) return // 防御：非番茄钟无阶段可跳
@@ -514,7 +542,9 @@ class TimerRepository(
         enqueue(PendingOpEntity(UUID.randomUUID().toString(), "timer_record", "create", r.id, RowCodec.recordRow(r).toString(), null, false, System.currentTimeMillis()))
     }
 
-    suspend fun deleteRecord(id: String) {
+    suspend fun deleteRecord(id: String) = repoMutex.withLock { doDeleteRecord(id) }
+
+    private suspend fun doDeleteRecord(id: String) {
         val old = db.recordDao().byId(id) ?: return
         val e = old.copy(deleted = true, version = old.version + 1)
         db.recordDao().upsert(e)
