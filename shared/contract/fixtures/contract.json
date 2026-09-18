@@ -113,5 +113,15 @@
     { "name": "无 session 的精确倒计时", "timer_id": "t-1", "session_id": null, "phase_key": "precise", "completed_focus": 0, "expect": "rec-db6a6b2a49d2b60e" },
     { "name": "空 session 与 null 同形", "timer_id": "t-1", "session_id": "", "phase_key": "precise", "completed_focus": 0, "expect": "rec-db6a6b2a49d2b60e" },
     { "name": "代理对按 code unit 折叠", "timer_id": "t-1", "session_id": "s-1", "phase_key": "🔋break", "completed_focus": 7, "expect": "rec-14280d1c3e5c6448" }
+  ],
+  "settle_stamp": [
+    { "kind": "auto", "name": "25 分钟专注整秒", "deadline_ms": 1789599940000, "preset_ms": 1500000, "expect": { "started_at": 1789598440000, "ended_at": 1789599940000, "duration_sec": 1500, "recordable": true } },
+    { "kind": "auto", "name": "非整秒预设必须向下取整（不是四舍五入）", "deadline_ms": 1789599940000, "preset_ms": 1500500, "expect": { "started_at": 1789598439500, "ended_at": 1789599940000, "duration_sec": 1500, "recordable": true } },
+    { "kind": "auto", "name": "唤醒后补算：ended_at 用计划截止而非发现时刻", "deadline_ms": 1789598200000, "preset_ms": 1500000, "expect": { "started_at": 1789596700000, "ended_at": 1789598200000, "duration_sec": 1500, "recordable": true } },
+    { "kind": "auto", "name": "1 秒预设边界", "deadline_ms": 1789600000000, "preset_ms": 1000, "expect": { "started_at": 1789599999000, "ended_at": 1789600000000, "duration_sec": 1, "recordable": true } },
+    { "kind": "auto", "name": "亚秒脏预设不可记账", "deadline_ms": 1789600000000, "preset_ms": 500, "expect": { "started_at": 1789599999500, "ended_at": 1789600000000, "duration_sec": 0, "recordable": false } },
+    { "kind": "manual", "name": "手动结束：不足整秒向下取整", "now_ms": 1789600000000, "elapsed_ms": 900600, "expect": { "started_at": 1789599099400, "ended_at": 1789600000000, "duration_sec": 900, "recordable": true } },
+    { "kind": "manual", "name": "手动 0 时长不可记账", "now_ms": 1789600000000, "elapsed_ms": 0, "expect": { "started_at": 1789600000000, "ended_at": 1789600000000, "duration_sec": 0, "recordable": false } },
+    { "kind": "manual", "name": "打点段 30 秒整", "now_ms": 1789600000000, "elapsed_ms": 30000, "expect": { "started_at": 1789599970000, "ended_at": 1789600000000, "duration_sec": 30, "recordable": true } }
   ]
 }

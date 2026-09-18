@@ -178,6 +178,32 @@ export function recordId(
   return 'rec-' + hex(fnv1a32(key, 2166136261)) + hex(fnv1a32(key, 2654435761));
 }
 
+/** 一条记录的时刻与时长。ended_at 决定它落在哪个自然日，因此「计划」与「检测」之别是跨端统计分歧的头号来源。 */
+export interface Stamp {
+  startedAt: number;
+  endedAt: number;
+  durationSec: number;
+}
+
+/**
+ * 到点自动结算的时刻：一律以「计划截止时刻」为准，不用发现它过期时的墙钟。
+ * 否则同一阶段在 A 端（一直醒着）记在今天 09:00、在 B 端（睡了一夜后补算）记在昨天夜里，
+ * 按天分组后两端的「今日专注」永久不一致。
+ */
+export function autoPhaseStamp(deadlineMs: number, presetMs: number): Stamp {
+  return { startedAt: deadlineMs - presetMs, endedAt: deadlineMs, durationSec: Math.floor(presetMs / 1000) };
+}
+
+/** 手动结束 / 跳阶段 / 打点的时刻：以操作时刻为准，段长是「实际操作了多少」 */
+export function manualStamp(nowMs: number, elapsedMs: number): Stamp {
+  return { startedAt: nowMs - elapsedMs, endedAt: nowMs, durationSec: Math.floor(elapsedMs / 1000) };
+}
+
+/** 不足 1 秒的脏段不写记录（阶段照常推进，只是不记账）——三端同一判据，别各写各的 <=0 */
+export function isRecordable(s: Stamp): boolean {
+  return s.durationSec > 0;
+}
+
 /** 一条记录对三项今日统计的贡献。统计口径只在契约里决定一次，双端求和后按天分组。 */
 export interface Contribution {
   focusMs: number;

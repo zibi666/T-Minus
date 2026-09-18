@@ -10,7 +10,8 @@ import {
   MONO_GUARD_MS, PARTIAL_SETTLE_MIN_MS, PHASE_FOCUS, PHASE_BREAK, PHASE_LONG_BREAK, RECORD, RUN_STATE,
   TIMER_TYPES, SYNC_TABLE_COLUMNS,
   PomodoroPhase, NormalizedPomodoro, isPomodoroConfig, normalizePomodoro, phasePresetMs,
-  isLongBreakDue, tagColorFor, recordId, contribute, sumContribution, EMPTY_CONTRIBUTION,
+  isLongBreakDue, tagColorFor, recordId, autoPhaseStamp, manualStamp, isRecordable, Stamp,
+  contribute, sumContribution, EMPTY_CONTRIBUTION,
   buildPomodoroConfig, buildPreciseConfig, DEFAULT_TIMER_COLOR, Contribution
 } from '../src/shared/contract';
 
@@ -324,7 +325,7 @@ export class TimerEngine {
       const total = mono && row.run_state === RUN_STATE.RUNNING
         ? Math.round(rt.segStartElapsedMs! + this.monoDeltaMs(mono))
         : Math.round(run.accumulated_ms ?? 0);
-      if (total >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, nowWall - total, nowWall, Math.round(total / 1000), RECORD.STOPWATCH);
+      if (total >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, manualStamp(nowWall, total), RECORD.STOPWATCH);
       return this.reset(id);
     }
 
@@ -339,7 +340,7 @@ export class TimerEngine {
         : Math.max(0, run.remaining_at_pause ?? 0);
       const elapsed = Math.max(0, preset - remaining);
       if (elapsed >= PARTIAL_SETTLE_MIN_MS) {
-        this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000),
+        this.insertRecord(rt, manualStamp(nowWall, elapsed),
           phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK, phase, run.completed_focus ?? 0);
       }
       return this.reset(id);
@@ -350,7 +351,7 @@ export class TimerEngine {
       ? Math.max(0, Math.round(rt.segStartRemainingMs! - this.monoDeltaMs(mono)))
       : Math.max(0, run.remaining_at_pause ?? 0);
     const elapsed = Math.max(0, preset - remaining);
-    if (elapsed >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000), RECORD.PRECISE, 'precise', 0);
+    if (elapsed >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, manualStamp(nowWall, elapsed), RECORD.PRECISE, 'precise', 0);
     return this.reset(id);
   }
 
@@ -379,7 +380,7 @@ export class TimerEngine {
       const seg = totalElapsed - segs.reduce((a, b) => a + b, 0);
       if (seg <= 0) return this.dto(rt);
       segs.push(seg);
-      this.insertRecord(rt, nowWall - seg, nowWall, Math.round(seg / 1000), RECORD.SEGMENT);
+      this.insertRecord(rt, manualStamp(nowWall, seg), RECORD.SEGMENT);
       // 运行中：target_at 与内部单调基准原样保留 → 倒计时无缝继续；暂停中：保留 remaining_at_pause
       rt.row.run_json = running
         ? JSON.stringify({ target_at: run.target_at, segments_ms: segs })
@@ -391,7 +392,7 @@ export class TimerEngine {
       const lap = total - segs.reduce((a, b) => a + b, 0);
       if (lap <= 0) return this.dto(rt);
       segs.push(lap);
-      this.insertRecord(rt, nowWall - lap, nowWall, Math.round(lap / 1000), RECORD.SEGMENT);
+      this.insertRecord(rt, manualStamp(nowWall, lap), RECORD.SEGMENT);
       rt.row.run_json = running
         ? JSON.stringify({ accumulated_ms: total, segment_started_at: nowWall, segments_ms: segs })
         : JSON.stringify({ accumulated_ms: total, segments_ms: segs });
@@ -416,8 +417,8 @@ export class TimerEngine {
     const elapsed = Math.max(0, preset - remaining);
     const nowWall = Date.now();
     if (elapsed >= PARTIAL_SETTLE_MIN_MS) {
-      this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000),
-        isFocus ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK);
+      this.insertRecord(rt, manualStamp(nowWall, elapsed),
+        isFocus ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK, phase, run.completed_focus ?? 0);
     }
     this.beginNextPhase(rt, p, phase, run.completed_focus ?? 0, nowWall);
     this.persistRun(rt);
@@ -838,7 +839,8 @@ export class TimerEngine {
   private finishPrecise(rt: Runtime): void {
     const nowWall = Date.now();
     const preset = Math.max(1, Math.round(this.cfgOf(rt.row).preset_ms ?? 0));
-    this.insertRecord(rt, nowWall - preset, nowWall, Math.round(preset / 1000), RECORD.PRECISE, 'precise', 0);
+    // 计划截止时刻为准（可能是几小时前到点的），否则补算的记录会落到"今天"，与 Android/鸿蒙 分到不同自然日
+    this.insertRecord(rt, autoPhaseStamp(this.runOf(rt.row).target_at ?? nowWall, preset), RECORD.PRECISE, 'precise', 0);
     rt.row.run_state = RUN_STATE.IDLE;
     rt.row.session_id = null;
     rt.row.run_json = null;
@@ -854,8 +856,9 @@ export class TimerEngine {
     const p = this.pomoOf(rt.row);
     const phase = run.phase ?? PHASE_FOCUS;
     const preset = phasePresetMs(p, phase);
-    // 阶段完成记录：把阶段写进 record_type，统计与历史页不再靠时长猜
-    this.insertRecord(rt, nowWall - preset, nowWall, Math.round(preset / 1000),
+    // 阶段完成记录：把阶段写进 record_type，统计与历史页不再靠时长猜；
+    // 时刻以计划截止为准——睡过头/托盘补算时，检测时刻会让本端与另两端把同一段记到不同的日子
+    this.insertRecord(rt, autoPhaseStamp(run.phase_ends_at ?? nowWall, preset),
       phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK, phase, run.completed_focus ?? 0);
     const next = this.beginNextPhase(rt, p, phase, run.completed_focus ?? 0, nowWall);
     rt.row.run_state = RUN_STATE.RUNNING; // 无限循环，保持 running
@@ -882,10 +885,8 @@ export class TimerEngine {
    * 多设备并行结算同一阶段会算出同一个 id，服务端 upsert 后只剩一条；
    * 手动打点（SEGMENT/STOPWATCH）只在单台设备发生，继续用随机 UUID。
    */
-  private insertRecord(
-    rt: Runtime, startedAt: number, endedAt: number, durationSec: number, recordType: string,
-    phaseKey?: string, completedFocus?: number
-  ): void {
+  private insertRecord(rt: Runtime, st: Stamp, recordType: string, phaseKey?: string, completedFocus?: number): void {
+    if (!isRecordable(st)) return; // 不足 1 秒的脏段不记账（阶段照常推进）
     const recId = phaseKey === undefined
       ? uuid()
       : recordId(rt.row.id, rt.row.session_id, phaseKey, completedFocus ?? 0);
@@ -893,14 +894,14 @@ export class TimerEngine {
       `INSERT OR REPLACE INTO timer_record (id, user_id, timer_id, session_id, started_at, ended_at, duration_sec,
         record_type, version, updated_at, deleted, origin_device_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?)`,
-      [recId, this.currentUserId, rt.row.id, rt.row.session_id, startedAt, endedAt, durationSec, recordType, endedAt, this.deviceId]
+      [recId, this.currentUserId, rt.row.id, rt.row.session_id, st.startedAt, st.endedAt, st.durationSec, recordType, st.endedAt, this.deviceId]
     );
     this.queueOp?.({
       table: 'timer_record', opType: 'create', baseVersion: 0, isRun: false,
       row: {
         id: recId, user_id: this.currentUserId, timer_id: rt.row.id, session_id: rt.row.session_id,
-        started_at: startedAt, ended_at: endedAt, duration_sec: durationSec, record_type: recordType,
-        version: 1, updated_at: endedAt, deleted: 0, origin_device_id: this.deviceId
+        started_at: st.startedAt, ended_at: st.endedAt, duration_sec: st.durationSec, record_type: recordType,
+        version: 1, updated_at: st.endedAt, deleted: 0, origin_device_id: this.deviceId
       }
     });
   }

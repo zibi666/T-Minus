@@ -149,6 +149,20 @@ class ContractFixtureTest {
     }
 
     @Test
+    fun `结算时刻与取整口径跨端一致`() {
+        for (t in arr("settle_stamp")) {
+            val e = t.obj("expect")
+            val s = if (t.str("kind") == "auto")
+                Contract.autoPhaseStamp(t.longv("deadline_ms"), t.longv("preset_ms"))
+            else Contract.manualStamp(t.longv("now_ms"), t.longv("elapsed_ms"))
+            assertEquals(t.str("name") + " started_at", e.longv("started_at"), s.startedAt)
+            assertEquals(t.str("name") + " ended_at", e.longv("ended_at"), s.endedAt)
+            assertEquals(t.str("name") + " duration_sec", e.longv("duration_sec"), s.durationSec)
+            assertEquals(t.str("name") + " recordable", e.bool("recordable"), Contract.isRecordable(s))
+        }
+    }
+
+    @Test
     fun `记录类型常量与 fixture 用值一致`() {
         // fixture 直接写字符串，本端常量必须逐字对应，否则统计与历史判定会静默失效
         assertTrue(arr("contribute").isNotEmpty())

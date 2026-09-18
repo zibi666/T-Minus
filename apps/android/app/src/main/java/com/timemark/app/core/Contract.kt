@@ -114,6 +114,23 @@ object Contract {
             String.format("%08x", fnv1a32(key, 0x9E3779B1.toInt()))
     }
 
+    /** 一条记录的时刻与时长。ended_at 决定它落在哪个自然日，「计划 vs 检测」之别是跨端统计分歧的头号来源。 */
+    data class Stamp(val startedAt: Long, val endedAt: Long, val durationSec: Long)
+
+    /**
+     * 到点自动结算的时刻：一律以「计划截止时刻」为准，不用发现它过期时的墙钟。
+     * 否则同一阶段在一直醒着的设备记今天、在睡过夜后补算的设备记昨天，按天分组后永久不一致。
+     */
+    fun autoPhaseStamp(deadlineMs: Long, presetMs: Long): Stamp =
+        Stamp(deadlineMs - presetMs, deadlineMs, Math.floorDiv(presetMs, 1000))
+
+    /** 手动结束 / 跳阶段 / 打点的时刻：以操作时刻为准，段长是「实际操作了多少」 */
+    fun manualStamp(nowMs: Long, elapsedMs: Long): Stamp =
+        Stamp(nowMs - elapsedMs, nowMs, Math.floorDiv(elapsedMs, 1000))
+
+    /** 不足 1 秒的脏段不写记录（阶段照常推进）——三端同一判据 */
+    fun isRecordable(s: Stamp): Boolean = s.durationSec > 0
+
     /** 普通精确倒计时 config（与 Windows buildPreciseConfig 同形） */
     fun preciseConfigJson(presetMs: Long): JsonObject = buildJsonObject {
         put("schema_version", 1)

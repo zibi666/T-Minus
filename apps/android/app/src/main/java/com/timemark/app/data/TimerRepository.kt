@@ -287,7 +287,7 @@ class TimerRepository(
                 val seg = totalElapsed - segs.sum()
                 if (seg <= 0) return // 无新分段（防重复打点）
                 segs.add(seg)
-                insertRecordRaw(old, now - seg, now, seg / 1000, Types.RECORD_SEGMENT)
+                insertRecordRaw(old, Contract.manualStamp(now, seg), Types.RECORD_SEGMENT)
                 // 倒计时不中断：保留 target_at / remaining_at_pause，仅追加 segments_ms
                 commitRun(old, run.copy(segments_ms = segs), old.run_state)
             }
@@ -298,7 +298,7 @@ class TimerRepository(
                 val lap = total - segs.sum()
                 if (lap <= 0) return
                 segs.add(lap)
-                insertRecordRaw(old, now - lap, now, lap / 1000, Types.RECORD_SEGMENT)
+                insertRecordRaw(old, Contract.manualStamp(now, lap), Types.RECORD_SEGMENT)
                 // 运行态：重置 segment_started_at 开新 lap；暂停态：仅追加 segments_ms
                 val newRun = if (running) run.copy(accumulated_ms = total, segment_started_at = now, segments_ms = segs)
                 else run.copy(accumulated_ms = total, segments_ms = segs)
@@ -330,7 +330,7 @@ class TimerRepository(
             else maxOf(0, (run.phase_ends_at ?: now) - now)
             val elapsed = maxOf(0, preset - remaining)
             if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
-                insertRecordRaw(old, now - elapsed, now, elapsed / 1000,
+                insertRecordRaw(old, Contract.manualStamp(now, elapsed),
                     if (phase == Contract.PHASE_FOCUS) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
                     phase, run.completed_focus ?: 0)
             }
@@ -341,14 +341,14 @@ class TimerRepository(
                 else maxOf(0, (run.target_at ?: now) - now)
                 val elapsed = maxOf(0, preset - remaining)
                 if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
-                    insertRecordRaw(old, now - elapsed, now, elapsed / 1000, Types.RECORD_PRECISE, "precise", 0)
+                    insertRecordRaw(old, Contract.manualStamp(now, elapsed), Types.RECORD_PRECISE, "precise", 0)
                 }
             }
             Types.STOPWATCH -> {
                 val total = if (old.run_state == Types.RUNNING) (run.accumulated_ms ?: 0) + maxOf(0, now - (run.segment_started_at ?: now))
                 else (run.accumulated_ms ?: 0)
                 if (total >= Contract.PARTIAL_SETTLE_MIN_MS) {
-                    insertRecordRaw(old, now - total, now, total / 1000, Types.RECORD_STOPWATCH)
+                    insertRecordRaw(old, Contract.manualStamp(now, total), Types.RECORD_STOPWATCH)
                 }
             }
         }
@@ -441,7 +441,7 @@ class TimerRepository(
     private suspend fun finishPrecise(t: TimerItemEntity, endedAt: Long): Settled {
         val cfg = Jsons.configJson(t.config_json)
         val preset = cfg.preset_ms ?: 0L
-        insertRecordRaw(t, endedAt - preset, endedAt, preset / 1000, Types.RECORD_PRECISE, "precise", 0)
+        insertRecordRaw(t, Contract.autoPhaseStamp(endedAt, preset), Types.RECORD_PRECISE, "precise", 0)
         val e = commitRunIdle(t)
         monoBaselines.remove(t.id)
         return Settled(e, Types.RECORD_PRECISE)
@@ -455,8 +455,7 @@ class TimerRepository(
         val run = Jsons.runJson(t.run_json)
         val phase = run.phase ?: Contract.PHASE_FOCUS
         val isFocus = phase == Contract.PHASE_FOCUS
-        insertRecordRaw(t, phaseEnd - Contract.phasePresetMs(p, phase), phaseEnd,
-            Contract.phasePresetMs(p, phase) / 1000,
+        insertRecordRaw(t, Contract.autoPhaseStamp(phaseEnd, Contract.phasePresetMs(p, phase)),
             if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
             phase, run.completed_focus ?: 0)
         val (nextPhase, nextPreset) = nextPhaseOf(p, phase, run.completed_focus)
@@ -500,7 +499,7 @@ class TimerRepository(
         val isFocus = phase == Contract.PHASE_FOCUS
         val elapsed = Contract.phasePresetMs(p, phase) - maxOf(0, (run.phase_ends_at ?: now) - now)
         if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
-            insertRecordRaw(old, now - elapsed, now, elapsed / 1000,
+            insertRecordRaw(old, Contract.manualStamp(now, elapsed),
                 if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
                 phase, run.completed_focus ?: 0)
         }
@@ -529,14 +528,15 @@ class TimerRepository(
      * 多设备并行结算同一阶段会得到同一个 id，服务端 upsert 后只剩一条；
      * 手动打点（SEGMENT/STOPWATCH）只在单台设备发生，继续用随机 UUID。
      */
-    private suspend fun insertRecordRaw(t: TimerItemEntity, startedAt: Long, endedAt: Long, durationSec: Long, type: String,
+    private suspend fun insertRecordRaw(t: TimerItemEntity, st: Contract.Stamp, type: String,
                                         phaseKey: String? = null, completedFocus: Int = 0) {
+        if (!Contract.isRecordable(st)) return // 不足 1 秒的脏段不记账（阶段照常推进）
         val r = TimerRecordEntity(
             id = phaseKey?.let { Contract.recordId(t.id, t.session_id, it, completedFocus) }
                 ?: UUID.randomUUID().toString(),
             user_id = auth.uid(), timer_id = t.id,
-            session_id = t.session_id, started_at = startedAt, ended_at = endedAt,
-            duration_sec = durationSec, record_type = type, origin_device_id = auth.deviceId()
+            session_id = t.session_id, started_at = st.startedAt, ended_at = st.endedAt,
+            duration_sec = st.durationSec, record_type = type, origin_device_id = auth.deviceId()
         )
         db.recordDao().upsert(r)
         enqueue(PendingOpEntity(UUID.randomUUID().toString(), "timer_record", "create", r.id, RowCodec.recordRow(r).toString(), null, false, System.currentTimeMillis()))

@@ -79,3 +79,16 @@ test('recordId：自动结算记录的跨端去重 id', () => {
     );
   }
 });
+
+test('settle_stamp：结算时刻与取整口径（跨端统计落在同一天）', () => {
+  for (const c of FIXTURE.settle_stamp) {
+    const s = c.kind === 'auto'
+      ? C.autoPhaseStamp(c.deadline_ms, c.preset_ms)
+      : C.manualStamp(c.now_ms, c.elapsed_ms);
+    assert.deepStrictEqual(
+      { started_at: s.startedAt, ended_at: s.endedAt, duration_sec: s.durationSec, recordable: C.isRecordable(s) },
+      c.expect,
+      `用例：${c.name}`
+    );
+  }
+});

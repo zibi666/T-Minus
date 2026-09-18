@@ -226,6 +226,22 @@ test('睡眠跨过整阶段：唤醒重排基准后补结算，与 Android/鸿�
   assert.strictEqual(JSON.parse(row(t.id).run_json).phase, 'break');
 });
 
+test('补算几小时前到点的倒计时：记录时刻按计划截止，不是发现时刻', () => {
+  const t = createPrecise(60000);
+  engine.start(t.id);
+  const deadline = Date.now() - 2 * 3600 * 1000; // 两小时前就该结束（合上电脑过夜）
+  db.run('UPDATE timer_item SET run_json = ? WHERE id = ?', [
+    JSON.stringify({ target_at: deadline, segments_ms: [] }), t.id
+  ]);
+  engine.reloadRow(t.id);
+  engine.tick();
+  const recs = records(t.id);
+  assert.strictEqual(recs.length, 1);
+  assert.strictEqual(recs[0].ended_at, deadline, 'ended_at 必须是计划截止，否则与另两端分到不同自然日');
+  assert.strictEqual(recs[0].started_at, deadline - 60000);
+  assert.strictEqual(recs[0].duration_sec, 60);
+});
+
 test('删除计时会给关联标签打墓碑，避免活行永久残留', () => {
   const t = createPrecise(60000);
   engine.setTimerTags(t.id, ['考研', '408']);
