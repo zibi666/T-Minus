@@ -122,15 +122,16 @@ interface TimerDao {
     @Query("SELECT * FROM timer_item WHERE id = :id")
     suspend fun byId(id: String): TimerItemEntity?
 
-    @Query("SELECT * FROM timer_item WHERE run_state = 'running'")
+    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND run_state = 'running'")
     suspend fun runningAll(): List<TimerItemEntity>
 
     /** 闹钟排程用：运行中的计时 + 日期倒计时（目标日零点提醒） */
     @Query("SELECT * FROM timer_item WHERE deleted = 0 AND (run_state = 'running' OR type = 'DATE_COUNTDOWN')")
     suspend fun allForAlarm(): List<TimerItemEntity>
 
-    @Query("SELECT * FROM timer_item")
-    suspend fun allRaw(): List<TimerItemEntity>
+    /** 登录时孤儿入队上传用：只取无主行，绝不取已归属行（否则陈旧副本会覆盖云端较新数据） */
+    @Query("SELECT * FROM timer_item WHERE user_id IS NULL")
+    suspend fun orphans(): List<TimerItemEntity>
 
     @Upsert suspend fun upsert(t: TimerItemEntity)
 
@@ -149,8 +150,8 @@ interface RecordDao {
     @Query("SELECT * FROM timer_record WHERE id = :id")
     suspend fun byId(id: String): TimerRecordEntity?
 
-    @Query("SELECT * FROM timer_record")
-    suspend fun allRaw(): List<TimerRecordEntity>
+    @Query("SELECT * FROM timer_record WHERE user_id IS NULL")
+    suspend fun orphans(): List<TimerRecordEntity>
 
     @Upsert suspend fun upsert(t: TimerRecordEntity)
 
@@ -169,10 +170,10 @@ interface MiscDao {
     @Query("UPDATE tag SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptTags(uid: String)
     @Query("UPDATE timer_tag SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptTimerTags(uid: String)
     @Query("UPDATE milestone SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptMilestones(uid: String)
-    // 登录后孤儿数据入队上传用（SyncManager.enqueueAllForUpload）
-    @Query("SELECT * FROM tag") suspend fun allTags(): List<TagEntity>
-    @Query("SELECT * FROM timer_tag") suspend fun allTimerTags(): List<TimerTagEntity>
-    @Query("SELECT * FROM milestone") suspend fun allMilestones(): List<MilestoneEntity>
+    // 登录后孤儿数据入队上传用：只取无主行
+    @Query("SELECT * FROM tag WHERE user_id IS NULL") suspend fun orphanTags(): List<TagEntity>
+    @Query("SELECT * FROM timer_tag WHERE user_id IS NULL") suspend fun orphanTimerTags(): List<TimerTagEntity>
+    @Query("SELECT * FROM milestone WHERE user_id IS NULL") suspend fun orphanMilestones(): List<MilestoneEntity>
 }
 
 @Dao

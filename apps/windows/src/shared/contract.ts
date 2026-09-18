@@ -151,6 +151,33 @@ export function tagColorFor(name: string): string {
   return TAG_PALETTE[sum % TAG_PALETTE.length];
 }
 
+/** FNV-1a/32，逐 UTF-16 code unit 折叠（刻意不用码点迭代，避免 tagColorFor 那类跨端漂移） */
+function fnv1a32(s: string, basis: number): number {
+  let h = basis >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h ^ s.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * 自动结算记录的去重 id：三端对「同一次阶段完成」必须算出同一个 id，
+ * 于是谁先 push 都一样，服务端按 id upsert 后只剩一条 —— 多设备并行结算因此无害。
+ * 只取跨设备共享的坐标（timer_id / session_id / 阶段 / 已完成专注数），
+ * 刻意不含 version（各端本地计数，正是漂移来源）与 phase_ends_at（会被单调守卫改写）。
+ */
+export function recordId(
+  timerId: string,
+  sessionId: string | null | undefined,
+  phaseKey: string,
+  completedFocus: number
+): string {
+  const key = `${timerId}|${sessionId ?? ''}|${phaseKey}|${completedFocus}`;
+  const hex = (n: number) => n.toString(16).padStart(8, '0');
+  return 'rec-' + hex(fnv1a32(key, 2166136261)) + hex(fnv1a32(key, 2654435761));
+}
+
 /** 一条记录对三项今日统计的贡献。统计口径只在契约里决定一次，双端求和后按天分组。 */
 export interface Contribution {
   focusMs: number;

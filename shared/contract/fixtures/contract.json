@@ -1,5 +1,5 @@
 {
-  "$comment": "跨端契约表驱动用例：Windows(apps/windows/tests/contract.test.cjs) 与 Android(ContractFixtureTest) 各自跑一遍同一份文件。任一端语义漂移即测试失败。",
+  "$comment": "跨端契约表驱动用例：Windows(apps/windows/tests/contract.test.cjs)、Android(ContractFixtureTest)、鸿蒙(tools/harmony-contract-test.mjs) 各自跑一遍同一份文件。任一端语义漂移即测试失败。",
   "constants": {
     "mono_guard_ms": 2000,
     "palette": ["#4DC9F0", "#9381FF", "#21E0C4", "#FFB224", "#FF6B6B", "#5A9EFF", "#F472B6", "#A3E635"],
@@ -105,5 +105,13 @@
     { "name": "英语", "tag": "英语", "expect": "#F472B6" },
     { "name": "专注", "tag": "专注", "expect": "#FFB224" },
     { "name": "单字符 a", "tag": "a", "expect": "#9381FF" }
+  ],
+  "record_id": [
+    { "name": "番茄钟首轮专注", "timer_id": "11111111-2222-4333-8444-555555555555", "session_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "phase_key": "focus", "completed_focus": 0, "expect": "rec-e3ae98e1cf161f75" },
+    { "name": "第四轮后长休息", "timer_id": "11111111-2222-4333-8444-555555555555", "session_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "phase_key": "long_break", "completed_focus": 4, "expect": "rec-c9e1b09501cdee01" },
+    { "name": "休息阶段", "timer_id": "11111111-2222-4333-8444-555555555555", "session_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "phase_key": "break", "completed_focus": 1, "expect": "rec-b52ad22d0c112f61" },
+    { "name": "无 session 的精确倒计时", "timer_id": "t-1", "session_id": null, "phase_key": "precise", "completed_focus": 0, "expect": "rec-db6a6b2a49d2b60e" },
+    { "name": "空 session 与 null 同形", "timer_id": "t-1", "session_id": "", "phase_key": "precise", "completed_focus": 0, "expect": "rec-db6a6b2a49d2b60e" },
+    { "name": "代理对按 code unit 折叠", "timer_id": "t-1", "session_id": "s-1", "phase_key": "🔋break", "completed_focus": 7, "expect": "rec-14280d1c3e5c6448" }
   ]
 }

@@ -200,13 +200,20 @@ export class SyncClient {
       let appliedMax = cursor;
       this.db.transaction(() => {
         for (const ch of changes) {
+          if (ch.origin_device_id === this.deviceId) {
+            appliedMax = Math.max(appliedMax, ch.change_seq); // 自身提交已在本地
+            continue;
+          }
+          const rid = ch.payload == null ? null : ch.payload.id;
+          // 本行还有未上传的本地操作：不消费，游标也不越过它，等 op 被服务端确认后下一轮重投
+          if (rid != null && this.hasQueuedOp(ch.table_name, String(rid))) continue;
           appliedMax = Math.max(appliedMax, ch.change_seq);
-          if (ch.origin_device_id === this.deviceId) continue; // 自身提交已在本地
           const appliedId = this.applyChange(ch);
           if (appliedId) touched.push([ch.table_name, appliedId]);
         }
-        this.db.setMeta('pull_cursor', String(appliedMax)); // 整页成功应用后才推进（§5.3）
+        this.db.setMeta('pull_cursor', String(appliedMax)); // 只推进到「连续已消费」前缀（§5.3）
       });
+      if (appliedMax === cursor) return; // 整页都被挡住：别再空转重取同一页，等下一次 sync
       for (const [t, id] of touched) {
         if (this.onRemoteChange) this.onRemoteChange(t, id);
       }
@@ -214,17 +221,20 @@ export class SyncClient {
     }
   }
 
-  /** 应用远程行；本行存在未上传操作时跳过（dirty 规则），返回被应用的行 id */
+  private hasQueuedOp(table: string, rowId: string): boolean {
+    const dirty = this.db.get(
+      `SELECT COUNT(*) AS n FROM pending_ops WHERE table_name = ? AND row_id = ? AND state='queued'`,
+      [table, rowId]
+    );
+    return !!dirty && Number(dirty.n) > 0;
+  }
+
+  /** 应用远程行（调用方已确认本行没有未上传操作），返回被应用的行 id */
   private applyChange(ch: PullChange): string | null {
     const row = ch.payload;
     const table = ch.table_name;
     const cols = COLS[table];
     if (!cols || !row || row.id == null) return null;
-    const dirty = this.db.get(
-      `SELECT COUNT(*) AS n FROM pending_ops WHERE table_name = ? AND row_id = ? AND state='queued'`,
-      [table, String(row.id)]
-    );
-    if (dirty && Number(dirty.n) > 0) return null;
     const values = cols.map((c) => (row[c] !== undefined ? row[c] : null));
     this.db.run(
       `INSERT OR REPLACE INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,

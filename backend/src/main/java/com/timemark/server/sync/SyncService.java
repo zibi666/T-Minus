@@ -94,12 +94,20 @@ public class SyncService {
 
         if ("accepted".equals(status)) {
             row.put("user_id", userId);
-            if ("delete".equals(opType)) row.put("deleted", 1);
-            rowStore.upsert(table, row);
-            String payload = rowStore.toPayload(table, row, userId);
-            jdbc.update("INSERT INTO change_log (user_id, table_name, row_id, op_type, payload, origin_device_id, committed_at) VALUES (?,?,?,?,?,?,?)",
-                    userId, table, row.get("id"), opType, payload,
-                    str(row.get("origin_device_id")), System.currentTimeMillis());
+            if ("delete".equals(opType)) {
+                row.put("deleted", 1);
+                // 墓碑落地即归零运行态：否则客户端按 run_state 扫描的结算循环会永久推进已删除的计时器
+                if ("timer_item".equals(table)) row.put("run_state", "idle");
+            }
+            if (rowStore.upsert(table, row, userId)) {
+                String payload = rowStore.toPayload(table, row, userId);
+                jdbc.update("INSERT INTO change_log (user_id, table_name, row_id, op_type, payload, origin_device_id, committed_at) VALUES (?,?,?,?,?,?,?)",
+                        userId, table, row.get("id"), opType, payload,
+                        str(row.get("origin_device_id")), System.currentTimeMillis());
+            } else {
+                status = "rejected";
+                reason = "foreign_row";
+            }
         }
 
         String responseJson = om.writeValueAsString(Map.of("status", status, "reason", reason == null ? "" : reason));

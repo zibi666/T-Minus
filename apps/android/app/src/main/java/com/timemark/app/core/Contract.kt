@@ -92,6 +92,28 @@ object Contract {
         return TAG_PALETTE[sum % TAG_PALETTE.size]
     }
 
+    /** FNV-1a/32，逐 UTF-16 code unit 折叠（与 Windows/鸿蒙逐位一致） */
+    private fun fnv1a32(s: String, basis: Int): Int {
+        var h = basis
+        for (c in s) {
+            h = h xor c.code
+            h *= 16777619
+        }
+        return h
+    }
+
+    /**
+     * 自动结算记录的去重 id：三端对「同一次阶段完成」必须算出同一个 id，
+     * 服务端按 id upsert 后只剩一条，多设备并行结算因此无害。
+     * 只取跨设备共享的坐标，刻意不含 version（各端本地计数）与 phase_ends_at（单调守卫会改写）。
+     */
+    fun recordId(timerId: String, sessionId: String?, phaseKey: String, completedFocus: Int): String {
+        val key = "$timerId|${sessionId ?: ""}|$phaseKey|$completedFocus"
+        // 0x811C9DC5 / 0x9E3779B1（FNV-1a 偏移基准，取 32 位回绕后的签名形态）
+        return "rec-" + String.format("%08x", fnv1a32(key, 0x811C9DC5.toInt())) +
+            String.format("%08x", fnv1a32(key, 0x9E3779B1.toInt()))
+    }
+
     /** 普通精确倒计时 config（与 Windows buildPreciseConfig 同形） */
     fun preciseConfigJson(presetMs: Long): JsonObject = buildJsonObject {
         put("schema_version", 1)

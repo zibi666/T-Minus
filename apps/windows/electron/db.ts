@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+import initSqlJs, { Database as SqlJsDatabase, SqlJsStatic } from 'sql.js';
 
 export function uuid(): string {
   return crypto.randomUUID();
@@ -90,11 +90,40 @@ export class LocalDB {
 
   async init(): Promise<void> {
     const SQL = await initSqlJs();
-    const existing = fs.existsSync(this.filePath) ? fs.readFileSync(this.filePath) : null;
-    this.db = existing ? new SQL.Database(existing) : new SQL.Database();
+    this.db = this.openReadable(SQL);
     this.must.run(DDL);
     this.migrate();
     this.flush();
+    // 每次启动留一份已知可读的快照：主库被外部损坏时至少能回到上一次启动的状态
+    try {
+      fs.copyFileSync(this.filePath, `${this.filePath}.bak`);
+    } catch (e) {
+      console.error('[db] 快照写入失败:', e);
+    }
+  }
+
+  /** 主库读不进来就退回启动快照；两份都读不进则把坏文件留存后开空库，绝不静默丢数据 */
+  private openReadable(SQL: SqlJsStatic): SqlJsDatabase {
+    for (const p of [this.filePath, `${this.filePath}.bak`]) {
+      if (!fs.existsSync(p)) continue;
+      try {
+        const db = new SQL.Database(fs.readFileSync(p));
+        if (p !== this.filePath) console.warn('[db] 主库不可读，已回退到启动快照:', p);
+        return db;
+      } catch (e) {
+        console.error('[db] 数据库文件不可读:', p, e);
+      }
+    }
+    if (fs.existsSync(this.filePath)) {
+      const kept = `${this.filePath}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(this.filePath, kept);
+        console.error('[db] 坏库文件已留存待查:', kept);
+      } catch (e) {
+        console.error('[db] 坏库文件留存失败:', e);
+      }
+    }
+    return new SQL.Database();
   }
 
   /** 轻量 schema 迁移（旧库升级）：CREATE TABLE IF NOT EXISTS 不会给已存在表加列，用 ALTER 补 */
@@ -155,7 +184,10 @@ export class LocalDB {
       this.saveTimer = null;
     }
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, Buffer.from(this.must.export()));
+    // 写临时文件再原子改名：直接覆盖式写整库时，断电/杀进程会留下截断文件，下次启动直接读不进来
+    const tmp = `${this.filePath}.tmp`;
+    fs.writeFileSync(tmp, Buffer.from(this.must.export()));
+    fs.renameSync(tmp, this.filePath);
   }
 
   getMeta(key: string): string | null {

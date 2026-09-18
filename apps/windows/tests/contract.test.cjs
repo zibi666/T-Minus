@@ -69,3 +69,13 @@ test('tagColorFor：标签哈希取色', () => {
     assert.strictEqual(C.tagColorFor(c.tag), c.expect, `用例：${c.name}`);
   }
 });
+
+test('recordId：自动结算记录的跨端去重 id', () => {
+  for (const c of FIXTURE.record_id) {
+    assert.strictEqual(
+      C.recordId(c.timer_id, c.session_id, c.phase_key, c.completed_focus),
+      c.expect,
+      `用例：${c.name}`
+    );
+  }
+});

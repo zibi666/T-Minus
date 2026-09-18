@@ -48,6 +48,11 @@ function cmpVer(a: string, b: string): number {
   return 0;
 }
 
+/** latest.json 也可能来自第三方镜像，openExternal 拿到任意串会被 ShellExecute 当协议处理器执行 → 只认本仓库的 GitHub 链接 */
+function trustedReleaseUrl(url: unknown): string | undefined {
+  return typeof url === 'string' && url.startsWith(`https://github.com/${REPO}/`) ? url : undefined;
+}
+
 async function fetchLatestManifest(): Promise<{ version: string; url?: string } | null> {
   for (const url of UPDATE_SOURCES) {
     try {
@@ -55,7 +60,7 @@ async function fetchLatestManifest(): Promise<{ version: string; url?: string } 
       if (!res.ok) continue;
       const j = (await res.json()) as Row;
       if (j && typeof j.version === 'string' && /^\d+\.\d+\.\d+$/.test(j.version)) {
-        return { version: j.version, url: typeof j.url === 'string' ? j.url : undefined };
+        return { version: j.version, url: trustedReleaseUrl(j.url) };
       }
     } catch { /* 换下一个源 */ }
   }

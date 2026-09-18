@@ -10,7 +10,7 @@ import {
   MONO_GUARD_MS, PARTIAL_SETTLE_MIN_MS, PHASE_FOCUS, PHASE_BREAK, PHASE_LONG_BREAK, RECORD, RUN_STATE,
   TIMER_TYPES, SYNC_TABLE_COLUMNS,
   PomodoroPhase, NormalizedPomodoro, isPomodoroConfig, normalizePomodoro, phasePresetMs,
-  isLongBreakDue, tagColorFor, contribute, sumContribution, EMPTY_CONTRIBUTION,
+  isLongBreakDue, tagColorFor, recordId, contribute, sumContribution, EMPTY_CONTRIBUTION,
   buildPomodoroConfig, buildPreciseConfig, DEFAULT_TIMER_COLOR, Contribution
 } from '../src/shared/contract';
 
@@ -325,7 +325,7 @@ export class TimerEngine {
       const elapsed = Math.max(0, preset - remaining);
       if (elapsed >= PARTIAL_SETTLE_MIN_MS) {
         this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000),
-          phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK);
+          phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK, phase, run.completed_focus ?? 0);
       }
       return this.reset(id);
     }
@@ -335,7 +335,7 @@ export class TimerEngine {
       ? Math.max(0, Math.round(rt.segStartRemainingMs! - this.monoDeltaMs(mono)))
       : Math.max(0, run.remaining_at_pause ?? 0);
     const elapsed = Math.max(0, preset - remaining);
-    if (elapsed >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000), RECORD.PRECISE);
+    if (elapsed >= PARTIAL_SETTLE_MIN_MS) this.insertRecord(rt, nowWall - elapsed, nowWall, Math.round(elapsed / 1000), RECORD.PRECISE, 'precise', 0);
     return this.reset(id);
   }
 
@@ -555,10 +555,13 @@ export class TimerEngine {
     if (!rt || rt.row.deleted) return false;
     const baseVersion = rt.row.version;
     rt.row.deleted = 1;
+    rt.row.run_state = 'idle';
     rt.row.version = baseVersion + 1;
     rt.row.updated_at = Date.now();
     const now = rt.row.updated_at;
-    this.db.run('UPDATE timer_item SET deleted=1, version=?, updated_at=? WHERE id=?', [rt.row.version, now, id]);
+    // 墓碑同时归零运行态：否则其它端按 run_state 扫描的结算循环会永久推进已删除的计时器
+    this.db.run('UPDATE timer_item SET deleted=1, run_state=?, version=?, updated_at=? WHERE id=?',
+      [rt.row.run_state, rt.row.version, now, id]);
     this.queueOp?.({ table: 'timer_item', opType: 'delete', row: { ...rt.row }, baseVersion, isRun: false });
     for (const link of this.db.all('SELECT id, tag_id, version FROM timer_tag WHERE timer_id = ? AND deleted = 0', [id])) {
       const linkVersion = n(link.version, 1);
@@ -820,7 +823,7 @@ export class TimerEngine {
   private finishPrecise(rt: Runtime): void {
     const nowWall = Date.now();
     const preset = Math.max(1, Math.round(this.cfgOf(rt.row).preset_ms ?? 0));
-    this.insertRecord(rt, nowWall - preset, nowWall, Math.round(preset / 1000), RECORD.PRECISE);
+    this.insertRecord(rt, nowWall - preset, nowWall, Math.round(preset / 1000), RECORD.PRECISE, 'precise', 0);
     rt.row.run_state = RUN_STATE.IDLE;
     rt.row.session_id = null;
     rt.row.run_json = null;
@@ -838,7 +841,7 @@ export class TimerEngine {
     const preset = phasePresetMs(p, phase);
     // 阶段完成记录：把阶段写进 record_type，统计与历史页不再靠时长猜
     this.insertRecord(rt, nowWall - preset, nowWall, Math.round(preset / 1000),
-      phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK);
+      phase === PHASE_FOCUS ? RECORD.POMODORO_FOCUS : RECORD.POMODORO_BREAK, phase, run.completed_focus ?? 0);
     const next = this.beginNextPhase(rt, p, phase, run.completed_focus ?? 0, nowWall);
     rt.row.run_state = RUN_STATE.RUNNING; // 无限循环，保持 running
     this.persistRun(rt);
@@ -859,10 +862,20 @@ export class TimerEngine {
     return nextPhase;
   }
 
-  private insertRecord(rt: Runtime, startedAt: number, endedAt: number, durationSec: number, recordType: string): void {
-    const recId = uuid();
+  /**
+   * 写入一条结算记录。给了 phaseKey 时 id 由 (timer, session, 阶段, 已完成专注数) 推出：
+   * 多设备并行结算同一阶段会算出同一个 id，服务端 upsert 后只剩一条；
+   * 手动打点（SEGMENT/STOPWATCH）只在单台设备发生，继续用随机 UUID。
+   */
+  private insertRecord(
+    rt: Runtime, startedAt: number, endedAt: number, durationSec: number, recordType: string,
+    phaseKey?: string, completedFocus?: number
+  ): void {
+    const recId = phaseKey === undefined
+      ? uuid()
+      : recordId(rt.row.id, rt.row.session_id, phaseKey, completedFocus ?? 0);
     this.db.run(
-      `INSERT INTO timer_record (id, user_id, timer_id, session_id, started_at, ended_at, duration_sec,
+      `INSERT OR REPLACE INTO timer_record (id, user_id, timer_id, session_id, started_at, ended_at, duration_sec,
         record_type, version, updated_at, deleted, origin_device_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?)`,
       [recId, this.currentUserId, rt.row.id, rt.row.session_id, startedAt, endedAt, durationSec, recordType, endedAt, this.deviceId]

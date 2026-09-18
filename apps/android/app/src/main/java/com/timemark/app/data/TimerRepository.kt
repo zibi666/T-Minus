@@ -139,7 +139,7 @@ class TimerRepository(
     suspend fun deleteTimer(id: String) {
         val old = db.timerDao().byId(id) ?: return
         val now = System.currentTimeMillis()
-        val e = old.copy(deleted = true, version = old.version + 1, updated_at = now)
+        val e = old.copy(deleted = true, run_state = Types.IDLE, version = old.version + 1, updated_at = now)
         db.timerDao().upsert(e)
         enqueue(PendingOpEntity(UUID.randomUUID().toString(), "timer_item", "delete", e.id, rowPayload(e, false), old.version, false, now))
         monoBaselines.remove(id)
@@ -307,7 +307,8 @@ class TimerRepository(
             val elapsed = maxOf(0, preset - remaining)
             if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
                 insertRecordRaw(old, now - elapsed, now, elapsed / 1000,
-                    if (phase == Contract.PHASE_FOCUS) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK)
+                    if (phase == Contract.PHASE_FOCUS) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
+                    phase, run.completed_focus ?: 0)
             }
         } else when (old.type) {
             Types.PRECISE -> {
@@ -316,7 +317,7 @@ class TimerRepository(
                 else maxOf(0, (run.target_at ?: now) - now)
                 val elapsed = maxOf(0, preset - remaining)
                 if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
-                    insertRecordRaw(old, now - elapsed, now, elapsed / 1000, Types.RECORD_PRECISE)
+                    insertRecordRaw(old, now - elapsed, now, elapsed / 1000, Types.RECORD_PRECISE, "precise", 0)
                 }
             }
             Types.STOPWATCH -> {
@@ -414,7 +415,7 @@ class TimerRepository(
     private suspend fun finishPrecise(t: TimerItemEntity, endedAt: Long): Settled {
         val cfg = Jsons.configJson(t.config_json)
         val preset = cfg.preset_ms ?: 0L
-        insertRecordRaw(t, endedAt - preset, endedAt, preset / 1000, Types.RECORD_PRECISE)
+        insertRecordRaw(t, endedAt - preset, endedAt, preset / 1000, Types.RECORD_PRECISE, "precise", 0)
         val e = commitRunIdle(t)
         monoBaselines.remove(t.id)
         return Settled(e, Types.RECORD_PRECISE)
@@ -430,7 +431,8 @@ class TimerRepository(
         val isFocus = phase == Contract.PHASE_FOCUS
         insertRecordRaw(t, phaseEnd - Contract.phasePresetMs(p, phase), phaseEnd,
             Contract.phasePresetMs(p, phase) / 1000,
-            if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK)
+            if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
+            phase, run.completed_focus ?: 0)
         val (nextPhase, nextPreset) = nextPhaseOf(p, phase, run.completed_focus)
         val e = t.copy(
             run_json = json.encodeToString(RunJson.serializer(), RunJson(phase = nextPhase, phase_ends_at = now + nextPreset, completed_focus = nextCompleted(phase, run.completed_focus))),
@@ -471,7 +473,8 @@ class TimerRepository(
         val elapsed = Contract.phasePresetMs(p, phase) - maxOf(0, (run.phase_ends_at ?: now) - now)
         if (elapsed >= Contract.PARTIAL_SETTLE_MIN_MS) {
             insertRecordRaw(old, now - elapsed, now, elapsed / 1000,
-                if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK)
+                if (isFocus) Types.RECORD_POMODORO_FOCUS else Types.RECORD_POMODORO_BREAK,
+                phase, run.completed_focus ?: 0)
         }
         val (nextPhase, nextPreset) = nextPhaseOf(p, phase, run.completed_focus)
         val e = old.copy(
@@ -493,9 +496,17 @@ class TimerRepository(
 
     // ---- 记录 ----
 
-    private suspend fun insertRecordRaw(t: TimerItemEntity, startedAt: Long, endedAt: Long, durationSec: Long, type: String) {
+    /**
+     * 写入一条结算记录。给了 phaseKey 时 id 由 (timer, session, 阶段, 已完成专注数) 推出，
+     * 多设备并行结算同一阶段会得到同一个 id，服务端 upsert 后只剩一条；
+     * 手动打点（SEGMENT/STOPWATCH）只在单台设备发生，继续用随机 UUID。
+     */
+    private suspend fun insertRecordRaw(t: TimerItemEntity, startedAt: Long, endedAt: Long, durationSec: Long, type: String,
+                                        phaseKey: String? = null, completedFocus: Int = 0) {
         val r = TimerRecordEntity(
-            id = UUID.randomUUID().toString(), user_id = auth.uid(), timer_id = t.id,
+            id = phaseKey?.let { Contract.recordId(t.id, t.session_id, it, completedFocus) }
+                ?: UUID.randomUUID().toString(),
+            user_id = auth.uid(), timer_id = t.id,
             session_id = t.session_id, started_at = startedAt, ended_at = endedAt,
             duration_sec = durationSec, record_type = type, origin_device_id = auth.deviceId()
         )

@@ -167,6 +167,31 @@ test('按天统计：专注/轮次/打点不双倍计入，休息段不计专注
   assert.strictEqual(today.focusMs, 60000, '休息段不计入专注时长');
 });
 
+test('多设备并行结算同一阶段：确定性 id 把重复结算折叠成一条记录', () => {
+  const t = createPomo();
+  engine.start(t.id);
+  const settleWith = (phase, completedFocus) => {
+    db.run('UPDATE timer_item SET run_json = ? WHERE id = ?', [
+      JSON.stringify({ phase, phase_ends_at: Date.now() - 1000, completed_focus: completedFocus }), t.id
+    ]);
+    engine.reloadRow(t.id);
+    engine.tick();
+  };
+
+  settleWith('focus', 0);
+  assert.strictEqual(records(t.id).length, 1, '首轮专注记一条');
+  // 另一台设备没看到这次推进，拿同一 session 的旧阶段再结算一遍：必须落在同一条上
+  settleWith('focus', 0);
+  assert.strictEqual(records(t.id).length, 1, '重复结算不得产生第二条记录');
+
+  // 换一个阶段必须是另一条，证明 key 不是过度折叠
+  settleWith('break', 1);
+  assert.strictEqual(records(t.id).length, 2);
+  const today = engine.dailyStats().find((s) => s.rounds > 0 || s.focusMs > 0);
+  assert.strictEqual(today.rounds, 1, '重复结算不得多计轮次');
+  assert.strictEqual(today.focusMs, 60000, '重复结算不得多计专注时长');
+});
+
 test('删除计时会给关联标签打墓碑，避免活行永久残留', () => {
   const t = createPrecise(60000);
   engine.setTimerTags(t.id, ['考研', '408']);

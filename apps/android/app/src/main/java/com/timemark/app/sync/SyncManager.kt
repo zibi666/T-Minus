@@ -37,8 +37,7 @@ class SyncManager(private val c: AppContainer) {
         return try {
             val resp = call(req)
             c.auth.save(resp.token, resp.user.id, resp.user.username)
-            adoptOrphans(resp.user.id)
-            enqueueAllForUpload(resp.user.id)
+            adoptAndEnqueueOrphans(resp.user.id)
             true
         } catch (e: Exception) {
             lastError = e.message ?: e.toString()
@@ -50,37 +49,32 @@ class SyncManager(private val c: AppContainer) {
         c.auth.clear()
     }
 
-    private suspend fun adoptOrphans(uid: String) {
+    /** 登录后只认领并入队「无主行」（离线期创建的那些）。
+     *  旧实现给当前账号的全部行入队 create：服务端对 create 只挡墓碑，于是本地陈旧副本会覆盖云端较新的行，
+     *  且 origin_device_id 被标成本机 → 其它设备 pull 时按「自身提交」跳过，整簇设备一起回退。 */
+    private suspend fun adoptAndEnqueueOrphans(uid: String) {
+        val timers = c.db.timerDao().orphans()
+        val records = c.db.recordDao().orphans()
+        val tags = c.db.miscDao().orphanTags()
+        val links = c.db.miscDao().orphanTimerTags()
+        val milestones = c.db.miscDao().orphanMilestones()
         c.db.timerDao().adoptOrphans(uid)
         c.db.recordDao().adoptOrphans(uid)
         c.db.miscDao().adoptTags(uid)
         c.db.miscDao().adoptTimerTags(uid)
         c.db.miscDao().adoptMilestones(uid)
-    }
-
-    /** 登录后把无主数据全部入队上传（比 Windows 的只认领更完整）。
-     *  修复：补全 tag / timer_tag / milestone 三表（原实现遗漏，离线期创建的标签永不同步）。 */
-    private suspend fun enqueueAllForUpload(uid: String) {
         val now = System.currentTimeMillis()
-        suspend fun op(table: String, rowId: String, payload: String) =
+        suspend fun op(table: String, rowId: String, payload: String) {
+            if (c.db.pendingOpDao().dirtyCount(table, rowId) > 0) return // 创建时已入过队
             c.db.pendingOpDao().enqueue(
                 PendingOpEntity(java.util.UUID.randomUUID().toString(), table, "create", rowId, payload, null, false, now)
             )
-        for (t in c.db.timerDao().allRaw()) if (t.user_id == uid && c.db.pendingOpDao().dirtyCount("timer_item", t.id) == 0) {
-            op("timer_item", t.id, RowCodec.entityRow(t).toString())
         }
-        for (r in c.db.recordDao().allRaw()) if (r.user_id == uid && c.db.pendingOpDao().dirtyCount("timer_record", r.id) == 0) {
-            op("timer_record", r.id, RowCodec.recordRow(r).toString())
-        }
-        for (g in c.db.miscDao().allTags()) if (g.user_id == uid && c.db.pendingOpDao().dirtyCount("tag", g.id) == 0) {
-            op("tag", g.id, RowCodec.tagRow(g).toString())
-        }
-        for (tt in c.db.miscDao().allTimerTags()) if (tt.user_id == uid && c.db.pendingOpDao().dirtyCount("timer_tag", tt.id) == 0) {
-            op("timer_tag", tt.id, RowCodec.timerTagRow(tt).toString())
-        }
-        for (m in c.db.miscDao().allMilestones()) if (m.user_id == uid && c.db.pendingOpDao().dirtyCount("milestone", m.id) == 0) {
-            op("milestone", m.id, RowCodec.milestoneRow(m).toString())
-        }
+        for (t in timers) op("timer_item", t.id, RowCodec.entityRow(t).toString())
+        for (r in records) op("timer_record", r.id, RowCodec.recordRow(r).toString())
+        for (g in tags) op("tag", g.id, RowCodec.tagRow(g).toString())
+        for (tt in links) op("timer_tag", tt.id, RowCodec.timerTagRow(tt).toString())
+        for (m in milestones) op("milestone", m.id, RowCodec.milestoneRow(m).toString())
     }
 
     suspend fun syncNow() {

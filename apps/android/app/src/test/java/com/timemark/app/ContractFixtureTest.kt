@@ -133,6 +133,22 @@ class ContractFixtureTest {
     }
 
     @Test
+    fun `自动结算记录的跨端去重 id`() {
+        for (t in arr("record_id")) {
+            assertEquals(
+                t.str("name"),
+                t.str("expect"),
+                Contract.recordId(
+                    t.str("timer_id"),
+                    t["session_id"]?.jsonPrimitive?.contentOrNull,
+                    t.str("phase_key"),
+                    t.intv("completed_focus")
+                )
+            )
+        }
+    }
+
+    @Test
     fun `记录类型常量与 fixture 用值一致`() {
         // fixture 直接写字符串，本端常量必须逐字对应，否则统计与历史判定会静默失效
         assertTrue(arr("contribute").isNotEmpty())
