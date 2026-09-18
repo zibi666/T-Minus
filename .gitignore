@@ -9,17 +9,38 @@ backend/target/
 apps/android/app/build/
 apps/android/build/
 apps/android/.gradle/
-tools/android/
 
-# 工作区私有数据与工具临时文件
-.workbuddy/
+# 本机工具链（SDK / JDK / Gradle 发行版，动辄上万文件、几百 MB，绝不能进库）
+tools/android/
+tools/android-dl/
+
+# 鸿蒙端（在途工作，构建产物与 IDE 目录不入库）
+apps/harmony/build/
+apps/harmony/**/build/
+apps/harmony/oh_modules/
+apps/harmony/.hvigor/
+apps/harmony/.idea/
+apps/harmony/local.properties
+
+# 会话临时产物（脚本落盘的中间输出，不是源码）
+*.log
+*.done
+apps/windows/*.txt
+!apps/windows/README.md
 tools/*.txt
+tools/*.log
+.workbuddy/
+server/
+
+# 凭据与本机配置（绝不入库）
 tools/ssh-config
 tools/known_hosts
+tools/*.pem
+**/*.jks
+**/*.keystore
+local.properties
 
 # 杂项
 Thumbs.db
 .DS_Store
-*.log
-java-check.txt
-.env-check.txt
+VERSION.bak

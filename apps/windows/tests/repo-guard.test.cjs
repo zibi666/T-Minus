@@ -88,6 +88,10 @@ test('三处版本号同源', () => {
   assert.ok(/rootProject\.extra\["appVersion"\]/.test(gradle), 'Android 未从 VERSION 读取 versionName');
 });
 
-test('旧 node 版同步服务端已移除，Java 后端是唯一实现', () => {
-  assert.ok(!fs.existsSync(path.join(ROOT, 'server')), 'server/ 仍在仓库里，与 backend/ 重复');
+test('旧 node 版同步服务端已从仓库移除，Java 后端是唯一实现', () => {
+  if (!fs.existsSync(path.join(ROOT, '.git'))) return;
+  const out = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf-8' });
+  // 只看被跟踪的文件：本机残留的旧版临时脚本/本地 db 属于开发者数据，不由测试处置
+  const still = out.split('\n').filter((f) => f.startsWith('server/'));
+  assert.strictEqual(still.length, 0, `仍有 ${still.length} 个 server/ 文件被跟踪`);
 });
