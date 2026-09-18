@@ -27,10 +27,14 @@ apps/harmony/local.properties
 *.done
 apps/windows/*.txt
 !apps/windows/README.md
+apps/android/*.txt
+backend/*.txt
 tools/*.txt
 tools/*.log
 .workbuddy/
 server/
+java-check.txt
+.env-check.txt
 
 # 凭据与本机配置（绝不入库）
 tools/ssh-config
