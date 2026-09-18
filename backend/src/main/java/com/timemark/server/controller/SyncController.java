@@ -20,6 +20,10 @@ import java.util.Map;
 @RequestMapping("/api/v1")
 public class SyncController {
 
+    /** 三端单批都是 200 条，这里留两倍余量：不封顶时一个大请求能长期占满 Hikari（池只有 8）拖死所有人的同步 */
+    private static final int MAX_PUSH_OPS = 400;
+    private static final int MAX_PULL_LIMIT = 1000;
+
     private final JdbcTemplate jdbc;
     private final SyncService syncService;
     private final ObjectMapper om;
@@ -36,13 +40,14 @@ public class SyncController {
                                     @RequestParam(defaultValue = "0") long cursor,
                                     @RequestParam(defaultValue = "500") int limit) {
         String userId = (String) request.getAttribute("uid");
-        int cap = Math.min(limit, 1000);
+        long from = Math.max(0, cursor);
+        int cap = Math.max(1, Math.min(limit, MAX_PULL_LIMIT)); // limit<=0 会让 has_more 恒真或 SQL 直接报错
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT change_seq, table_name, row_id, op_type, payload, origin_device_id " +
                         "FROM change_log WHERE user_id = ? AND change_seq > ? ORDER BY change_seq LIMIT ?",
-                userId, cursor, cap);
+                userId, from, cap);
         List<Map<String, Object>> changes = new ArrayList<>();
-        long next = cursor;
+        long next = from;
         for (Map<String, Object> r : rows) {
             Map<String, Object> c = new LinkedHashMap<>();
             c.put("change_seq", ((Number) r.get("change_seq")).longValue());
@@ -73,6 +78,9 @@ public class SyncController {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> operations =
                 body.get("operations") == null ? List.of() : (List<Map<String, Object>>) body.get("operations");
+        if (operations.size() > MAX_PUSH_OPS) {
+            throw new ApiException(400, "too_many_ops", "单次 push 最多 " + MAX_PUSH_OPS + " 条");
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("results", syncService.push(operations, userId));
         return m;
