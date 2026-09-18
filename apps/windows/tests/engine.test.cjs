@@ -94,6 +94,20 @@ test('结束=如实结算并归零；重置=直接归零不记账', () => {
   engine.reset(t.id);
   assert.strictEqual(records(t.id).length, 1, '重置不记账');
   assert.strictEqual(row(t.id).run_json, null);
+
+  // session_id 生命周期：手动 stop/reset 保留（只有自然到点才清），start 才换新。
+  // 清空会让 §6 的 stale_session 判据失去比对基准，也让三端行内容不一致。
+  const session = row(t.id).session_id;
+  assert.ok(session, 'start 后应有 session');
+  db.run('UPDATE timer_item SET run_json = ? WHERE id = ?', [
+    JSON.stringify({ ...JSON.parse(row(t.id).run_json), phase_ends_at: Date.now() + 10000 }), t.id
+  ]);
+  engine.reloadRow(t.id);
+  engine.pause(t.id);
+  engine.stop(t.id);
+  assert.strictEqual(row(t.id).session_id, session, 'stop 后 session 必须保留');
+  engine.start(t.id);
+  assert.notStrictEqual(row(t.id).session_id, session, '重新 start 必须换新 session');
 });
 
 test('打点不打断倒计时，且不中断时不重复计入统计', () => {

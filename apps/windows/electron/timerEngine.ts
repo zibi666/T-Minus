@@ -292,12 +292,12 @@ export class TimerEngine {
     return this.dto(rt);
   }
 
-  /** 归零：不记账（区别于 stop 的「如实结算已进行时长」） */
+  /** 归零：不记账（区别于 stop 的「如实结算已进行时长」）。session_id 保留——start 总会 mint 新的，
+   *  清空反而让 §6 的 stale_session 判据失去比对基准，且与 Android/鸿蒙 行内容不一致 */
   reset(id: string): TimerDTO | null {
     const rt = this.timers.get(id);
     if (!rt) return null;
     rt.row.run_state = RUN_STATE.IDLE;
-    rt.row.session_id = null;
     rt.row.run_json = null;
     rt.segStartMonoNs = null;
     this.persistRun(rt);
