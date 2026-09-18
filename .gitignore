@@ -32,7 +32,7 @@ backend/*.txt
 tools/*.txt
 tools/*.log
 .workbuddy/
-server/
+/server/
 java-check.txt
 .env-check.txt
 
