@@ -113,9 +113,8 @@ test('结束=如实结算并归零；重置=直接归零不记账', () => {
 test('打点不打断倒计时，且不中断时不重复计入统计', () => {
   const t = createPrecise(600000);
   engine.start(t.id);
-  const s = engine.segment(t.id); // 刚起步，不足 1ms → 不记段
-  assert.strictEqual(s.segmentsMs, undefined);
-  assert.strictEqual(records(t.id).length, 0);
+  engine.segment(t.id); // 刚起步打点：段长是亚毫秒级，取决于机器快慢，不能拿它当断言依据
+  assert.strictEqual(records(t.id).length, 0, '不足 1 秒的段不得产生记录（契约 isRecordable）');
   // 推进到已过 100 秒再打点
   const r = row(t.id);
   db.run('UPDATE timer_item SET run_json = ? WHERE id = ?', [
@@ -254,6 +253,26 @@ test('补算几小时前到点的倒计时：记录时刻按计划截止，不�
   assert.strictEqual(recs[0].ended_at, deadline, 'ended_at 必须是计划截止，否则与另两端分到不同自然日');
   assert.strictEqual(recs[0].started_at, deadline - 60000);
   assert.strictEqual(recs[0].duration_sec, 60);
+});
+
+test('账号可见域：登录后只看得到无主行与自己名下的行', () => {
+  const t0 = createPomo('离线建的').id;          // 未登录创建 → user_id 为 NULL
+  engine.currentUserId = 'u-A';
+  engine.load();
+  const tA = createPomo('A的').id;
+  engine.currentUserId = 'u-B';
+  engine.load();
+  const ids = () => engine.list().map((t) => t.id).sort();
+  assert.deepStrictEqual(ids(), [t0].sort(), '切到 B 之后 A 的计时不得出现在列表里');
+  const tB = createPomo('B的').id;
+  assert.deepStrictEqual(ids(), [t0, tB].sort());
+  engine.currentUserId = 'u-A';
+  engine.load();
+  assert.deepStrictEqual(ids(), [t0, tA].sort(), '切回 A 应看到 A 的而非 B 的');
+  // 未登录时全放行（本机自持数据），否则用户会觉得数据凭空消失
+  engine.currentUserId = null;
+  engine.load();
+  assert.deepStrictEqual(ids(), [t0, tA, tB].sort());
 });
 
 test('删除计时会给关联标签打墓碑，避免活行永久残留', () => {

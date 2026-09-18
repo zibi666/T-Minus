@@ -37,7 +37,9 @@ export class SyncClient {
   /** 远程变更应用到本地后回调（引擎据此刷新运行时基线） */
   onRemoteChange: ((table: string, rowId: string) => void) | null = null;
   onStatus: ((s: SyncStatusInfo) => void) | null = null;
-  private lastStatus: SyncStatusInfo = { state: 'idle', lastSyncAt: null, pending: 0, error: null };
+  private lastStatus: SyncStatusInfo = { state: 'idle', lastSyncAt: null, pending: 0, error: null, needsRelogin: false };
+  /** 服务端判 401 后置位；重新登录或登出即清 */
+  private expired = false;
 
   constructor(private db: LocalDB, private deviceId: string) {}
 
@@ -54,8 +56,22 @@ export class SyncClient {
   }
 
   private emit(state: SyncStatusInfo['state'], error: string | null = null) {
-    this.lastStatus = { state, lastSyncAt: this.lastStatus.lastSyncAt, pending: this.pendingCount(), error };
+    this.lastStatus = {
+      state, lastSyncAt: this.lastStatus.lastSyncAt, pending: this.pendingCount(), error, needsRelogin: this.expired
+    };
     if (this.onStatus) this.onStatus(this.lastStatus);
+  }
+
+  /** 401：本地凭据作废。不清就只会每秒重试一个永远不会成功的请求，界面还显示「已登录 · 自动同步」 */
+  private expireSession(): void {
+    this.expired = true;
+    this.token = null;
+    this.userId = null;
+    this.username = null;
+    for (const k of ['auth_token', 'auth_uid', 'auth_username']) {
+      this.db.run('DELETE FROM meta WHERE key = ?', [k]);
+    }
+    this.emit('error', '登录已过期，请重新登录');
   }
 
   pendingCount(): number {
@@ -92,6 +108,7 @@ export class SyncClient {
       this.token = data.token;
       this.userId = data.user.id;
       this.username = data.user.username ?? username;
+      this.expired = false;
       this.db.setMeta('auth_token', this.token);
       this.db.setMeta('auth_uid', this.userId);
       this.db.setMeta('auth_username', this.username);
@@ -106,6 +123,7 @@ export class SyncClient {
     this.token = null;
     this.userId = null;
     this.username = null;
+    this.expired = false;
     for (const k of ['auth_token', 'auth_uid', 'auth_username']) {
       this.db.run('DELETE FROM meta WHERE key = ?', [k]);
     }
@@ -144,7 +162,7 @@ export class SyncClient {
     try {
       await this.pushPending();
       await this.pull();
-      this.lastStatus = { state: 'idle', lastSyncAt: Date.now(), pending: this.pendingCount(), error: null };
+      this.lastStatus = { state: 'idle', lastSyncAt: Date.now(), pending: this.pendingCount(), error: null, needsRelogin: this.expired };
       if (this.onStatus) this.onStatus(this.lastStatus);
     } catch (e) {
       this.emit('error', e instanceof Error ? e.message : String(e));
@@ -171,7 +189,7 @@ export class SyncClient {
         headers: this.headers(),
         body: JSON.stringify(body)
       });
-      if (res.status === 401) throw new Error('登录已过期，请重新登录');
+      if (res.status === 401) { this.expireSession(); throw new Error('登录已过期，请重新登录'); }
       if (!res.ok) throw new Error('push 失败：HTTP ' + res.status);
       const data = (await res.json()) as PushResp;
       let consumed = 0;
@@ -191,7 +209,7 @@ export class SyncClient {
     for (let round = 0; round < 100; round++) {
       const cursor = Number(this.db.getMeta('pull_cursor') || 0);
       const res = await fetch(`${this.serverUrl}/api/v1/sync/pull?cursor=${cursor}&limit=500`, { headers: this.headers() });
-      if (res.status === 401) throw new Error('登录已过期，请重新登录');
+      if (res.status === 401) { this.expireSession(); throw new Error('登录已过期，请重新登录'); }
       if (!res.ok) throw new Error('pull 失败：HTTP ' + res.status);
       const data = (await res.json()) as PullResp;
       const changes = data.changes ?? [];

@@ -203,18 +203,19 @@ function registerIpc(): void {
   ipcMain.handle('auth:login', async (_e, serverUrl: string, username: string, password: string) => {
     sync.setServer(serverUrl);
     const r = await sync.login(String(username || '').trim(), password);
-    if (r.ok) engine.currentUserId = sync.authState().userId;
+    if (r.ok) { engine.currentUserId = sync.authState().userId; engine.load(); } // 换账号必须重建可见域
     return r;
   });
   ipcMain.handle('auth:register', async (_e, serverUrl: string, username: string, password: string) => {
     sync.setServer(serverUrl);
     const r = await sync.register(String(username || '').trim(), password);
-    if (r.ok) engine.currentUserId = sync.authState().userId;
+    if (r.ok) { engine.currentUserId = sync.authState().userId; engine.load(); }
     return r;
   });
   ipcMain.handle('auth:logout', () => {
     sync.logout();
     engine.currentUserId = null;
+    engine.load();
     return { ok: true };
   });
   ipcMain.handle('sync:now', () => sync.syncNow());
@@ -301,10 +302,13 @@ app.whenReady().then(async () => {
       : '专注完成，开始休息';
     new Notification({ title: 'TimeMark 时光标', body: `「${row.name}」${label}` }).show();
   };
-  engine.load();
-
   sync = new SyncClient(db, deviceId);
   sync.onStatus = (s) => {
+    // 凭据被服务端判失效：本地作用域要一并退回未登录，否则界面仍按旧账号过滤数据
+    if (s.needsRelogin && engine.currentUserId !== null) {
+      engine.currentUserId = null;
+      engine.load();
+    }
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send('sync-status', s);
   };
   sync.onRemoteChange = (table, rowId) => {
@@ -316,6 +320,7 @@ app.whenReady().then(async () => {
   engine.queueOp = (op) => sync.enqueue(op);
   const auth = sync.restore();
   engine.currentUserId = auth.userId;
+  engine.load(); // 必须在 currentUserId 就位之后再加载，否则启动后账号可见域一直是关的
 
   Menu.setApplicationMenu(null);
   registerIpc();

@@ -174,4 +174,6 @@ export interface SyncStatusInfo {
   lastSyncAt: number | null;
   pending: number;
   error: string | null;
+  /** 服务端返回 401（JWT 过期或被撤销）。不清这个标志，界面会一直显示「已登录 · 自动同步」而实际早已停摆 */
+  needsRelogin: boolean;
 }

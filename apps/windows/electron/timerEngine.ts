@@ -123,6 +123,18 @@ export class TimerEngine {
     return isPomodoroConfig(row.type, this.cfgOf(row));
   }
 
+  /**
+   * 账号可见域。未登录时全放行（本机自持数据）；登录后只认无主行与自己名下的行。
+   * 不收口时换账号登录会把上一个账号的计时列出来并可编辑——写回去会被服务端按 token 判 foreign_row，
+   * 本地改动从此静默不再同步，而且列表里混着别人的数据。
+   * col 只会是本文件里的字面量，绝不来自入参，所以直接拼进 SQL 不构成注入面。
+   */
+  private scope(col: string): { sql: string; params: unknown[] } {
+    return this.currentUserId === null
+      ? { sql: '1=1', params: [] }
+      : { sql: `(${col} IS NULL OR ${col} = ?)`, params: [this.currentUserId] };
+  }
+
   private pomoOf(row: TimerRow): NormalizedPomodoro {
     return normalizePomodoro(this.cfgOf(row));
   }
@@ -171,7 +183,8 @@ export class TimerEngine {
   load(): void {
     this.loadTags();
     this.timers.clear();
-    for (const raw of this.db.all('SELECT * FROM timer_item')) {
+    const s = this.scope('user_id');
+    for (const raw of this.db.all('SELECT * FROM timer_item WHERE ' + s.sql, s.params)) {
       const row = rowOf(raw);
       const rt: Runtime = { row, segStartMonoNs: null };
       this.timers.set(row.id, rt);
@@ -595,9 +608,10 @@ export class TimerEngine {
 
   /** 近期计时记录（只读，供历史页；ended_at 倒序） */
   listRecentRecords(limit = 300): RecordDTO[] {
+    const s = this.scope('user_id');
     const rows = this.db.all(
-      'SELECT * FROM timer_record WHERE deleted = 0 ORDER BY ended_at DESC LIMIT ?',
-      [Math.max(1, Math.min(1000, Math.round(limit)))]
+      'SELECT * FROM timer_record WHERE deleted = 0 AND ' + s.sql + ' ORDER BY ended_at DESC LIMIT ?',
+      [...s.params, Math.max(1, Math.min(1000, Math.round(limit)))]
     );
     return rows.map((r: Record<string, unknown>) => ({
       id: String(r.id),
@@ -613,13 +627,14 @@ export class TimerEngine {
   /** 按本地自然日聚合的专注统计（全部由已同步的 timer_record 现场推导，不再有本地私有账本） */
   dailyStats(): DayStatDTO[] {
     const pomo = new Map<string, { isPomo: boolean; cfg: NormalizedPomodoro }>();
-    for (const r of this.db.all('SELECT id, type, config_json FROM timer_item')) {
+    const s = this.scope('user_id');
+    for (const r of this.db.all('SELECT id, type, config_json FROM timer_item WHERE ' + s.sql, s.params)) {
       const cfg = safeParse(r.config_json == null ? null : String(r.config_json));
       pomo.set(String(r.id), { isPomo: isPomodoroConfig(String(r.type), cfg), cfg: normalizePomodoro(cfg) });
     }
     const fallback = normalizePomodoro({});
     const byDay = new Map<string, Contribution>();
-    for (const r of this.db.all('SELECT timer_id, ended_at, duration_sec, record_type FROM timer_record WHERE deleted = 0')) {
+    for (const r of this.db.all('SELECT timer_id, ended_at, duration_sec, record_type FROM timer_record WHERE deleted = 0 AND ' + s.sql, s.params)) {
       const t = pomo.get(String(r.timer_id)) ?? { isPomo: false, cfg: fallback };
       const c = contribute(
         { durationSec: n(r.duration_sec), recordType: String(r.record_type ?? '') },
@@ -654,7 +669,8 @@ export class TimerEngine {
 
   /** 全部计时元数据（含已删除，供历史页保留已删计时的记录并标注） */
   listMetas(): TimerMeta[] {
-    return this.db.all('SELECT id, name, color, type, config_json, deleted FROM timer_item').map((r: Record<string, unknown>) => {
+    const s = this.scope('user_id');
+    return this.db.all('SELECT id, name, color, type, config_json, deleted FROM timer_item WHERE ' + s.sql, s.params).map((r: Record<string, unknown>) => {
       const config = safeParse<TimerConfigView>(r.config_json == null ? null : String(r.config_json));
       const type = String(r.type) as TimerMeta['type'];
       return {
@@ -693,7 +709,8 @@ export class TimerEngine {
 
   /** 全部标签（供表单联想与筛选） */
   listTags(): Array<{ id: string; name: string; color: string }> {
-    return this.db.all('SELECT id, name, color FROM tag WHERE deleted = 0 ORDER BY name').map((r: Record<string, unknown>) => ({
+    const s = this.scope('user_id');
+    return this.db.all('SELECT id, name, color FROM tag WHERE deleted = 0 AND ' + s.sql + ' ORDER BY name', s.params).map((r: Record<string, unknown>) => ({
       id: String(r.id), name: String(r.name ?? ''), color: String(r.color ?? DEFAULT_TIMER_COLOR)
     }));
   }

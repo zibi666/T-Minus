@@ -18,7 +18,7 @@ export default function App() {
   const [records, setRecords] = useState<RecordDTO[]>([]);
   const [metas, setMetas] = useState<TimerMeta[]>([]);
   const [auth, setAuth] = useState<AuthInfo | null>(null);
-  const [sync, setSync] = useState<SyncStatusInfo>({ state: 'idle', lastSyncAt: null, pending: 0, error: null });
+  const [sync, setSync] = useState<SyncStatusInfo>({ state: 'idle', lastSyncAt: null, pending: 0, error: null, needsRelogin: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -77,7 +77,8 @@ export default function App() {
   /** 同步状态浅比较：内容未变不触发 re-render（syncing 每 4s 重复 emit、对象身份每次都变） */
   function applySync(s: SyncStatusInfo) {
     const p = lastSyncRef.current;
-    if (p && p.state === s.state && p.pending === s.pending && p.error === s.error && p.lastSyncAt === s.lastSyncAt) return;
+    if (p && p.state === s.state && p.pending === s.pending && p.error === s.error
+      && p.lastSyncAt === s.lastSyncAt && p.needsRelogin === s.needsRelogin) return;
     lastSyncRef.current = s;
     setSync(s);
   }
@@ -112,6 +113,11 @@ export default function App() {
       offData?.();
     };
   }, [refreshLedger]);
+
+  // 凭据过期时直接把登录框推到眼前：否则侧栏会一直挂着「已登录」，而同步其实每 4s 撞一次 401
+  useEffect(() => {
+    if (sync.needsRelogin) setLoginOpen(true);
+  }, [sync.needsRelogin]);
 
   /** 500ms tick：更新列表。番茄钟阶段推进已由主进程引擎自动完成（后台/托盘也走），
    *  渲染层仅检测 running→idle（普通倒计时到点）或番茄钟阶段切换 → 刷新记录与今日统计 */
