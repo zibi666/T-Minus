@@ -85,9 +85,9 @@ fun HistoryScreen(c: AppContainer, onBack: () -> Unit) {
             Spacer(Modifier.width(4.dp))
             val seen = LinkedHashMap<String, Boolean>()
             filtered.forEach { seen[colorById[it.timer_id] ?: ""] = true }
-            PALETTE.filter { cc -> seen.any { s -> s.key.equals("#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt()), ignoreCase = true) } }
-                .forEach { cc ->
-                    val hex = "#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt())
+            PALETTE.map { hexOf(it) }
+                .filter { hex -> seen.keys.any { it.equals(hex, ignoreCase = true) } }
+                .forEach { hex ->
                     Box(Modifier.padding(2.dp).clip(RoundedCornerShape(6.dp)).clickable { colorFilter = hex }) { ColorDot(hex, 16) }
                 }
         }
@@ -119,7 +119,7 @@ private fun RecordRow(r: TimerRecordEntity, name: String, color: String?, tint: 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(name, color = C.text, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                 Spacer(Modifier.width(6.dp))
-                TypeBadge(r.record_type)
+                TypeBadge(r.record_type, label = recordLabel(r.record_type))
             }
             Text(Fmt.hm(r.started_at) + " ~ " + Fmt.hm(r.ended_at), color = C.textLow, fontSize = 11.sp)
         }

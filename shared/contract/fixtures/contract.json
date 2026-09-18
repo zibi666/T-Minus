@@ -1,0 +1,109 @@
+{
+  "$comment": "跨端契约表驱动用例：Windows(apps/windows/tests/contract.test.cjs) 与 Android(ContractFixtureTest) 各自跑一遍同一份文件。任一端语义漂移即测试失败。",
+  "constants": {
+    "mono_guard_ms": 2000,
+    "palette": ["#4DC9F0", "#9381FF", "#21E0C4", "#FFB224", "#FF6B6B", "#5A9EFF", "#F472B6", "#A3E635"],
+    "default_color": "#4DC9F0"
+  },
+  "normalize": [
+    {
+      "name": "canonical: 四档都在 pomodoro 内",
+      "config": { "schema_version": 1, "preset_ms": 1500000, "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 6 } },
+      "expect": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 6 }
+    },
+    {
+      "name": "回归 long_break_ms 落位：本端 v0.4.7 写在顶层，另一端必须仍读到 30 分钟",
+      "config": { "schema_version": 1, "preset_ms": 1500000, "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "rounds": 4 }, "long_break_ms": 1800000 },
+      "expect": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 }
+    },
+    {
+      "name": "规范落位优先于顶层镜像（两处不一致时以 pomodoro 内为准）",
+      "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 }, "long_break_ms": 1800000 },
+      "expect": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 }
+    },
+    {
+      "name": "旧格式 v0.4.6 顶层 focus_ms/short_break_ms/rounds_before_long",
+      "config": { "schema_version": 1, "focus_ms": 1800000, "short_break_ms": 360000, "rounds_before_long": 3 },
+      "expect": { "work_ms": 1800000, "break_ms": 360000, "long_break_ms": 900000, "rounds": 3 }
+    },
+    {
+      "name": "全缺省 → 25/5/15/4",
+      "config": { "schema_version": 1 },
+      "expect": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 }
+    },
+    {
+      "name": "夹紧：专注 10 秒夹到 1 分钟，休息 0 回默认，长休息超大夹到 4 小时上限，轮数 99 夹到 12",
+      "config": { "pomodoro": { "work_ms": 10000, "break_ms": 0, "long_break_ms": 999999999, "rounds": 99 } },
+      "expect": { "work_ms": 60000, "break_ms": 300000, "long_break_ms": 14400000, "rounds": 12 }
+    },
+    {
+      "name": "夹紧：轮数为 0/负数回默认 4（不因 rounds=0 判否番茄钟）",
+      "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "rounds": 0 } },
+      "expect": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 }
+    }
+  ],
+  "is_pomodoro": [
+    { "name": "PRECISE + pomodoro 嵌套", "type": "PRECISE_COUNTDOWN", "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": true },
+    { "name": "PRECISE + 空 pomodoro 对象仍算（rounds 补默认）", "type": "PRECISE_COUNTDOWN", "config": { "pomodoro": {} }, "expect": true },
+    { "name": "PRECISE + 旧 focus_ms", "type": "PRECISE_COUNTDOWN", "config": { "focus_ms": 1500000 }, "expect": true },
+    { "name": "PRECISE + focus_ms=0 不算", "type": "PRECISE_COUNTDOWN", "config": { "focus_ms": 0 }, "expect": false },
+    { "name": "普通 PRECISE 倒计时", "type": "PRECISE_COUNTDOWN", "config": { "preset_ms": 1500000 }, "expect": false },
+    { "name": "STOPWATCH 带 pomodoro（脏数据）不算", "type": "STOPWATCH", "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": false },
+    { "name": "DATE 带 pomodoro（脏数据）不算", "type": "DATE_COUNTDOWN", "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": false }
+  ],
+  "phase_preset": [
+    { "name": "focus", "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 } }, "phase": "focus", "expect_ms": 1500000 },
+    { "name": "break", "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 } }, "phase": "break", "expect_ms": 300000 },
+    { "name": "long_break", "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 } }, "phase": "long_break", "expect_ms": 1800000 },
+    { "name": "未知/缺失 phase → focus 档", "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 } }, "phase": null, "expect_ms": 1500000 }
+  ],
+  "long_break_due": [
+    { "name": "4 轮档，完成第 4 轮 → 长休息", "config": { "pomodoro": { "rounds": 4 } }, "completed": 4, "expect": true },
+    { "name": "4 轮档，完成第 8 轮 → 长休息", "config": { "pomodoro": { "rounds": 4 } }, "completed": 8, "expect": true },
+    { "name": "4 轮档，完成第 3 轮 → 短休息", "config": { "pomodoro": { "rounds": 4 } }, "completed": 3, "expect": false },
+    { "name": "0（未开始）→ 不触发", "config": { "pomodoro": { "rounds": 4 } }, "completed": 0, "expect": false }
+  ],
+  "build_pomodoro_config": [
+    {
+      "name": "写入落位：pomodoro 内 + 顶层镜像，preset_ms=work_ms",
+      "input": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 },
+      "expect": {
+        "schema_version": 1,
+        "preset_ms": 1500000,
+        "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 1800000, "rounds": 4 },
+        "long_break_ms": 1800000
+      }
+    },
+    {
+      "name": "写入前夹紧",
+      "input": { "work_ms": 1000, "break_ms": 1000, "long_break_ms": 1000, "rounds": 50 },
+      "expect": {
+        "schema_version": 1,
+        "preset_ms": 60000,
+        "pomodoro": { "work_ms": 60000, "break_ms": 30000, "long_break_ms": 30000, "rounds": 12 },
+        "long_break_ms": 30000
+      }
+    }
+  ],
+  "build_precise_config": [
+    { "name": "普通倒计时", "input_ms": 1500000, "expect": { "schema_version": 1, "preset_ms": 1500000 } },
+    { "name": "10 秒下限", "input_ms": 10000, "expect": { "schema_version": 1, "preset_ms": 10000 } }
+  ],
+  "contribute": [
+    { "name": "番茄钟专注阶段", "record_type": "POMODORO_FOCUS", "duration_sec": 1500, "timer_is_pomodoro": true, "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 } }, "expect": { "focus_ms": 1500000, "rounds": 1, "marks": 0 } },
+    { "name": "番茄钟短休息不计专注也不计轮次", "record_type": "POMODORO_BREAK", "duration_sec": 300, "timer_is_pomodoro": true, "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 } }, "expect": { "focus_ms": 0, "rounds": 0, "marks": 0 } },
+    { "name": "打点只计次数（与最终结算不双倍计入）", "record_type": "SEGMENT", "duration_sec": 600, "timer_is_pomodoro": false, "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": { "focus_ms": 0, "rounds": 0, "marks": 1 } },
+    { "name": "普通倒计时到点", "record_type": "PRECISE", "duration_sec": 1500, "timer_is_pomodoro": false, "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": { "focus_ms": 1500000, "rounds": 1, "marks": 0 } },
+    { "name": "正计时结算", "record_type": "STOPWATCH", "duration_sec": 90, "timer_is_pomodoro": false, "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": { "focus_ms": 90000, "rounds": 1, "marks": 0 } },
+    { "name": "历史番茄钟 PRECISE：时长等于短休息档 → 判为休息", "record_type": "PRECISE", "duration_sec": 300, "timer_is_pomodoro": true, "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 } }, "expect": { "focus_ms": 0, "rounds": 0, "marks": 0 } },
+    { "name": "历史番茄钟 PRECISE：时长等于专注档 → 判为专注", "record_type": "PRECISE", "duration_sec": 1500, "timer_is_pomodoro": true, "config": { "pomodoro": { "work_ms": 1500000, "break_ms": 300000, "long_break_ms": 900000, "rounds": 4 } }, "expect": { "focus_ms": 1500000, "rounds": 1, "marks": 0 } },
+    { "name": "零时长脏记录忽略", "record_type": "PRECISE", "duration_sec": 0, "timer_is_pomodoro": false, "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": { "focus_ms": 0, "rounds": 0, "marks": 0 } },
+    { "name": "未知 record_type 忽略", "record_type": "WHATEVER", "duration_sec": 100, "timer_is_pomodoro": false, "config": { "pomodoro": { "work_ms": 1500000 } }, "expect": { "focus_ms": 0, "rounds": 0, "marks": 0 } }
+  ],
+  "tag_color": [
+    { "name": "考研", "tag": "考研", "expect": "#A3E635" },
+    { "name": "英语", "tag": "英语", "expect": "#F472B6" },
+    { "name": "专注", "tag": "专注", "expect": "#FFB224" },
+    { "name": "单字符 a", "tag": "a", "expect": "#9381FF" }
+  ]
+}

@@ -7,6 +7,7 @@ import com.timemark.app.data.AppContainer
 import com.timemark.app.service.AlarmController
 import com.timemark.app.service.TimerService
 import com.timemark.app.sync.SyncManager
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,7 +20,13 @@ class TimeMarkApp : Application() {
     lateinit var container: AppContainer
     lateinit var alarms: AlarmController
     val sync: SyncManager get() = container.sync
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** 无 handler 时协程内未捕获异常会直接杀进程（例如后台启动前台服务被系统拒绝）。
+     *  SupervisorJob 只保证兄弟协程不连带取消，仍然需要这个兜底记录。 */
+    private val handler = CoroutineExceptionHandler { _, e ->
+        android.util.Log.e("TimeMarkApp", "未捕获异常", e)
+    }
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
 
     override fun onCreate() {
         super.onCreate()
@@ -29,50 +36,73 @@ class TimeMarkApp : Application() {
         startAppLoop()
     }
 
-    /** 全局 1s 循环：到点结算 → 重排闹钟 → 前台服务启停 → 4s 同步节拍（指数退避） */
+    /** 空闲节拍：结算 → 前台服务启停 → 重排闹钟 → 同步。
+     *  有计时在跑时，秒级精度由 TimerService 自己的循环负责，这里退回低频省电。 */
     private fun startAppLoop() {
         appScope.launch {
-            var syncClock = 0
-            var backoff = 4000L
+            var sinceSyncMs = 0L
+            var failures = 0
             while (isActive) {
-                try { container.repo.settleDue() } catch (e: Exception) { }
-                manageService()
-                syncClock += 1000
-                if (syncClock >= backoff) {
-                    syncClock = 0
-                    val loggedIn = runCatching { container.auth.loggedIn.first() }.getOrDefault(false)
-                    if (loggedIn) {
-                        sync.syncNow()
-                        backoff = if (sync.lastError == null) 4000L else minOf(60000L, backoff * 2)
-                    } else backoff = 4000L
+                val running = hasRunning()
+                try { container.repo.settleDue() } catch (e: Exception) { android.util.Log.w("TimeMarkApp", "settle failed", e) }
+                manageService(running)
+                try { alarms.scheduleNext() } catch (e: Exception) { android.util.Log.w("TimeMarkApp", "alarm schedule failed", e) }
+
+                val beat = if (running) ACTIVE_BEAT_MS else IDLE_BEAT_MS
+                sinceSyncMs += beat
+
+                val loggedIn = runCatching { container.auth.loggedIn.first() }.getOrDefault(false)
+                val pending = runCatching { container.db.pendingOpDao().queuedCount() }.getOrDefault(0)
+                // 有积压操作时快推（4s）；空闲时退到 20s 拉一次；连续失败再指数退避
+                val syncBeat = when {
+                    failures > 0 -> minOf(MAX_BACKOFF_MS, SYNC_BEAT_MS shl minOf(failures, 5))
+                    pending > 0 -> SYNC_BEAT_MS
+                    else -> IDLE_SYNC_BEAT_MS
                 }
-                delay(1000)
+                if (loggedIn && sinceSyncMs >= syncBeat) {
+                    sinceSyncMs = 0
+                    sync.syncNow()
+                    failures = if (sync.lastError == null) 0 else failures + 1
+                }
+                delay(beat)
             }
         }
     }
 
-    private suspend fun manageService() {
-        val anyRunning = runCatching {
-            container.db.timerDao().runningAll().any { it.type != Types.DATE }
-        }.getOrDefault(false)
-        if (anyRunning && !serviceRunning) {
-            serviceRunning = true
-            startForegroundService(Intent(this, TimerService::class.java))
-        } else if (!anyRunning && serviceRunning) {
-            serviceRunning = false
-            stopService(Intent(this, TimerService::class.java))
+    private suspend fun hasRunning(): Boolean = runCatching {
+        container.db.timerDao().runningAll().any { it.type != Types.DATE }
+    }.getOrDefault(false)
+
+    /** 前台服务只在「有可运行计时在跑」时存在；启停都必须包异常：
+     *  Android 12+ 从后台启动前台服务会抛 ForegroundServiceStartNotAllowedException，
+     *  未捕获会直接杀掉进程（本类 appScope 之外的调用点尤其危险）。 */
+    private suspend fun manageService(running: Boolean) {
+        try {
+            if (running && !serviceRunning) {
+                startForegroundService(Intent(this, TimerService::class.java))
+            } else if (!running && serviceRunning) {
+                stopService(Intent(this, TimerService::class.java))
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("TimeMarkApp", "前台服务启停被拒", e)
         }
     }
 
     /** 结算后的统一动作：重排闹钟 + 前台服务启停（供闹钟/开机广播调用） */
     fun afterSettle() {
         appScope.launch {
-            try { alarms.scheduleNext() } catch (e: Exception) { }
-            manageService()
+            try { alarms.scheduleNext() } catch (e: Exception) { android.util.Log.w("TimeMarkApp", "alarm schedule failed", e) }
+            manageService(hasRunning())
         }
     }
 
-    fun refreshService() { afterSettle() }
+    companion object {
+        private const val ACTIVE_BEAT_MS = 2_000L
+        private const val IDLE_BEAT_MS = 15_000L
+        private const val SYNC_BEAT_MS = 4_000L
+        private const val IDLE_SYNC_BEAT_MS = 20_000L
+        private const val MAX_BACKOFF_MS = 120_000L
 
-    companion object { var serviceRunning = false }
+        @Volatile var serviceRunning = false
+    }
 }

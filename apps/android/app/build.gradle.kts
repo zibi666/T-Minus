@@ -14,8 +14,16 @@ android {
         applicationId = "com.timemark.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.4.6"
+        versionCode = 4
+        // 版本号唯一来源：仓库根 VERSION（与 Windows package.json / latest.json 同步）
+        versionName = rootProject.extra["appVersion"] as String
+    }
+
+    sourceSets {
+        getByName("test") {
+            // 跨端契约 fixture 与 Windows 端共用同一份文件，任一端语义漂移即测试失败
+            resources.srcDir("../../../shared/contract/fixtures")
+        }
     }
 
     buildTypes {

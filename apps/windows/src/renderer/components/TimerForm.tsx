@@ -1,16 +1,48 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { TimerType, PomodoroInfo } from '../../shared/types';
+import { TimerType, TimerDTO, TimerConfigView } from '../../shared/types';
+import {
+  CLAMPS, TIMER_PALETTE, DEFAULT_TIMER_COLOR, buildPomodoroConfig, buildPreciseConfig, normalizePomodoro
+} from '../../shared/contract';
 import { formatRemaining } from '../../shared/format';
+import { isPomodoro } from '../helpers';
 import { IconCalendar, IconHourglass, IconTimer, IconRepeat, IconClose, IconPlus } from './icons';
 import Select from './Select';
 
 export interface EditTarget {
   mode: 'create' | 'edit';
-  timer?: any;
+  timer?: TimerDTO;
 }
 
-/** v3 计时器色板（规范 §1.3 --tc 8 色） */
-const COLORS = ['#FF6B6B', '#FF9F43', '#FFB224', '#3DDB97', '#21E0C4', '#4DC9F0', '#5A9EFF', '#9381FF'];
+/** v3 计时器色板（规范 §1.3 --tc 8 色，单一来源见 shared/contract） */
+const COLORS = TIMER_PALETTE;
+
+/** 毫秒上下界 → 分钟上下界（表单以分钟为输入单位） */
+const minOf = ([lo]: readonly [number, number]) => Math.ceil(lo / 60000);
+const maxOf = ([, hi]: readonly [number, number]) => Math.floor(hi / 60000);
+
+/** 表单里的番茄钟时长以「分钟」为单位存取，落库前换算 */
+interface PomoMin { workMin: number; breakMin: number; longMin: number; rounds: number }
+
+function minutesOfPomodoro(t?: TimerDTO): PomoMin {
+  const p = normalizePomodoro(t?.config);
+  return {
+    workMin: Math.round(p.work_ms / 60000),
+    breakMin: Math.round(p.break_ms / 60000),
+    longMin: Math.round(p.long_break_ms / 60000),
+    rounds: p.rounds
+  };
+}
+
+/** 预设毫秒 → 天/时/分/秒四段（缺省 25 分） */
+function splitPreset(ms?: number) {
+  const v = Math.max(0, Math.round(ms ?? 0));
+  return {
+    days: Math.floor(v / 86400000),
+    hours: Math.floor((v % 86400000) / 3600000),
+    minutes: v ? Math.floor((v % 3600000) / 60000) : 25,
+    seconds: Math.floor((v % 60000) / 1000)
+  };
+}
 
 /** 数字输入：悬停滚轮直接加减（原生非 passive 监听，阻页滚动），步长 step，范围 [min,max] */
 function WheelNumber({ value, min, max, step = 1, onChange }: {
@@ -90,26 +122,17 @@ const TYPE_ICONS: Record<FormType, React.ReactNode> = {
 export default function TimerForm({ target, onClose }: { target: EditTarget; onClose: () => void }) {
   const t = target.timer;
   const isEdit = target.mode === 'edit';
-  const innerType: FormType = t?.config?.pomodoro ? 'POMODORO' : t?.type ?? 'DATE_COUNTDOWN';
+  const innerType: FormType = t ? (isPomodoro(t) ? 'POMODORO' : t.type) : 'DATE_COUNTDOWN';
   const [name, setName] = useState<string>(t?.name ?? '');
   const [type, setType] = useState<FormType>(innerType);
-  const [color, setColor] = useState<string>(t?.color ?? COLORS[5]);
+  const [color, setColor] = useState<string>(t?.color ?? DEFAULT_TIMER_COLOR);
   const [remark, setRemark] = useState<string>(t?.remark ?? '');
   const date = useDateParts(t?.config?.target_date);
   const targetDate = date.targetDate;
   const [includeToday, setIncludeToday] = useState<boolean>(!!t?.config?.include_today);
-  const [dParts, setDParts] = useState({
-    days: t?.config?.preset_ms ? Math.floor(t.config.preset_ms / 86400000) : 0,
-    hours: t?.config?.preset_ms ? Math.floor((t.config.preset_ms % 86400000) / 3600000) : 0,
-    minutes: t?.config?.preset_ms ? Math.floor((t.config.preset_ms % 3600000) / 60000) : 25,
-    seconds: t?.config?.preset_ms ? Math.floor((t.config.preset_ms % 60000) / 1000) : 0
-  });
-  // 番茄钟配置（默认 25/5/4，规范 §2）
-  const [pomo, setPomo] = useState<{ workMin: number; breakMin: number; rounds: number }>({
-    workMin: t?.config?.pomodoro ? Math.round(t.config.pomodoro.work_ms / 60000) : 25,
-    breakMin: t?.config?.pomodoro ? Math.round(t.config.pomodoro.break_ms / 60000) : 5,
-    rounds: t?.config?.pomodoro ? t.config.pomodoro.rounds : 4
-  });
+  const [dParts, setDParts] = useState(() => splitPreset(t?.config?.preset_ms));
+  // 番茄钟配置（默认值与夹紧由契约给出；长休息在 Windows 侧同样可编辑）
+  const [pomo, setPomo] = useState<PomoMin>(() => minutesOfPomodoro(t));
   // 标签（新建/编辑均可设置；与既有标签联想）
   const [tags, setTags] = useState<string[]>(Array.isArray(t?.tags) ? t.tags : []);
   const [tagInput, setTagInput] = useState('');
@@ -139,15 +162,10 @@ export default function TimerForm({ target, onClose }: { target: EditTarget; onC
   ];
 
   function applyPreset(ms: number) {
-    setDParts({
-      days: Math.floor(ms / 86400000),
-      hours: Math.floor((ms % 86400000) / 3600000),
-      minutes: Math.floor((ms % 3600000) / 60000),
-      seconds: Math.floor((ms % 60000) / 1000)
-    });
+    setDParts(splitPreset(ms));
   }
 
-  function buildConfig(): any {
+  function buildConfig(): TimerConfigView {
     if (wireType === 'DATE_COUNTDOWN') {
       return {
         schema_version: 1,
@@ -157,15 +175,15 @@ export default function TimerForm({ target, onClose }: { target: EditTarget; onC
       };
     }
     if (isPomoType) {
-      const info: PomodoroInfo = {
-        work_ms: Math.max(1, Math.round(pomo.workMin)) * 60000,
-        break_ms: Math.max(1, Math.round(pomo.breakMin)) * 60000,
-        rounds: Math.max(1, Math.min(12, Math.round(pomo.rounds)))
-      };
-      return { schema_version: 1, preset_ms: info.work_ms, pomodoro: info };
+      return buildPomodoroConfig({
+        work_ms: Math.round(pomo.workMin) * 60000,
+        break_ms: Math.round(pomo.breakMin) * 60000,
+        long_break_ms: Math.round(pomo.longMin) * 60000,
+        rounds: Math.round(pomo.rounds)
+      });
     }
     if (wireType === 'PRECISE_COUNTDOWN') {
-      return { schema_version: 1, preset_ms: presetMs };
+      return buildPreciseConfig(presetMs);
     }
     return { schema_version: 1 };
   }
@@ -187,7 +205,12 @@ export default function TimerForm({ target, onClose }: { target: EditTarget; onC
     }
     const config = buildConfig();
     if (isEdit && t) {
-      await window.timemark.update(t.id, { name: name.trim(), color, remark, config });
+      const r = await window.timemark.update(t.id, { name: name.trim(), color, remark, config });
+      if (!r.ok) {
+        // 引擎拒绝（如运行中改时长）必须回显，否则表单关掉而什么都没变
+        setError(r.message || '保存失败');
+        return;
+      }
       if (tags.length || (t.tags ?? []).length) await window.timemark.setTimerTags(t.id, tags);
     } else {
       const created = await window.timemark.create({
@@ -196,14 +219,8 @@ export default function TimerForm({ target, onClose }: { target: EditTarget; onC
         color,
         remark,
         config
-      } as any);
-      // 引擎 create 只持久化 preset_ms，pomodoro 扩展字段经 update 落库（idle 状态允许）
-      if (created) {
-        if (isPomoType) {
-          await window.timemark.update(created.id, { config });
-        }
-        if (tags.length) await window.timemark.setTimerTags(created.id, tags);
-      }
+      });
+      if (created && tags.length) await window.timemark.setTimerTags(created.id, tags);
     }
     onClose();
   }
@@ -241,20 +258,28 @@ export default function TimerForm({ target, onClose }: { target: EditTarget; onC
             <div className="dur-row">
               <div className="field">
                 <label>专注（分钟）</label>
-                <WheelNumber value={pomo.workMin} min={1} max={180} onChange={(v) => setPomo({ ...pomo, workMin: v })} />
+                <WheelNumber value={pomo.workMin} min={minOf(CLAMPS.work_ms)} max={maxOf(CLAMPS.work_ms)}
+                  onChange={(v) => setPomo({ ...pomo, workMin: v })} />
               </div>
               <div className="field">
-                <label>休息（分钟）</label>
-                <WheelNumber value={pomo.breakMin} min={1} max={60} onChange={(v) => setPomo({ ...pomo, breakMin: v })} />
+                <label>短休息（分钟）</label>
+                <WheelNumber value={pomo.breakMin} min={minOf(CLAMPS.break_ms)} max={maxOf(CLAMPS.break_ms)}
+                  onChange={(v) => setPomo({ ...pomo, breakMin: v })} />
+              </div>
+              <div className="field">
+                <label>长休息（分钟）</label>
+                <WheelNumber value={pomo.longMin} min={minOf(CLAMPS.long_break_ms)} max={maxOf(CLAMPS.long_break_ms)}
+                  onChange={(v) => setPomo({ ...pomo, longMin: v })} />
               </div>
               <div className="field">
                 <label>轮数</label>
-                <WheelNumber value={pomo.rounds} min={1} max={12} onChange={(v) => setPomo({ ...pomo, rounds: v })} />
+                <WheelNumber value={pomo.rounds} min={CLAMPS.rounds[0]} max={CLAMPS.rounds[1]}
+                  onChange={(v) => setPomo({ ...pomo, rounds: v })} />
               </div>
             </div>
             <div className="checkbox" style={{ gap: 0 }}>
               <div className="sub" style={{ fontSize: 12.5, color: 'var(--text-low)' }}>
-                运行时自动循环：专注 → 休息 → 下一轮，共 {Math.max(1, Math.round(pomo.rounds))} 轮
+                运行时自动循环：专注 → 休息，每 {Math.max(1, Math.round(pomo.rounds))} 轮进一次长休息
               </div>
             </div>
           </>

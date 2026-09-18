@@ -2,11 +2,10 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, Notification, dialog, nativeTheme, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { LocalDB, uuid } from './db';
+import { LocalDB, uuid, Row } from './db';
 import { TimerEngine } from './timerEngine';
 import { gatherExport } from './exporter';
-import { todayInTz } from './dateLogic';
-import { CreateTimerInput, UpdateTimerPatch, TickPayload } from '../src/shared/types';
+import { CreateTimerInput, UpdateTimerPatch, TickPayload, UpdateInfo } from '../src/shared/types';
 import { SyncClient } from './syncClient';
 
 // ---- 数据目录开关（§8 M2 双实例同步验收）----
@@ -25,6 +24,8 @@ let db: LocalDB;
 let engine: TimerEngine;
 let sync: SyncClient;
 let deviceId = '';
+/** 托盘常驻：点关闭只隐藏，必须从托盘菜单显式退出 */
+let isQuitting = false;
 const ddayNotified = new Set<string>(); // key: `${timerId}:${targetDate}`
 
 // ---- 更新检查（GitHub 仓库 latest.json，多源回退：jsDelivr CDN → 原始仓库 → ghproxy） ----
@@ -35,7 +36,6 @@ const UPDATE_SOURCES = [
   `https://raw.githubusercontent.com/${REPO}/main/apps/windows/latest.json`,
   `https://ghproxy.net/https://raw.githubusercontent.com/${REPO}/main/apps/windows/latest.json`
 ];
-export interface UpdateInfo { hasUpdate: boolean; latest: string; current: string; url: string; checkedAt: number }
 let lastUpdateInfo: UpdateInfo | null = null;
 
 function cmpVer(a: string, b: string): number {
@@ -53,7 +53,7 @@ async function fetchLatestManifest(): Promise<{ version: string; url?: string } 
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
-      const j: any = await res.json();
+      const j = (await res.json()) as Row;
       if (j && typeof j.version === 'string' && /^\d+\.\d+\.\d+$/.test(j.version)) {
         return { version: j.version, url: typeof j.url === 'string' ? j.url : undefined };
       }
@@ -77,6 +77,15 @@ async function checkUpdate(): Promise<UpdateInfo> {
     }).show();
   }
   return info;
+}
+
+// 自签根 CA 支持（deploy/Caddyfile-ip 方案）：随包放了 assets/ca/timemark-ca.pem 就追加为可信根。
+// 必须在任何 TLS 连接建立前设置，因此写在模块加载期而不是 ready 回调里。
+const bundledCa = path.join(app.getAppPath(), 'assets', 'ca', 'timemark-ca.pem');
+if (fs.existsSync(bundledCa)) {
+  process.env.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS
+    ? `${process.env.NODE_EXTRA_CA_CERTS};${bundledCa}`
+    : bundledCa;
 }
 
 // GPU 策略：真机默认启用硬件加速 —— 整窗极光光斑漂移/光晕/SVG 环动画若走 CPU 光栅化
@@ -125,7 +134,7 @@ function createWindow(): void {
 let trayTipShown = false;
 // 关闭到托盘（M1：常驻托盘进程）
 win.on('close', (e) => {
-  if (!(app as any).isQuiting) {
+  if (!isQuitting) {
     e.preventDefault();
     win?.hide();
     if (!trayTipShown && Notification.isSupported()) {
@@ -147,7 +156,7 @@ function createTray(): void {
     {
       label: '退出',
       click: () => {
-        (app as any).isQuiting = true;
+        isQuitting = true;
         app.quit();
       }
     }
@@ -166,13 +175,18 @@ function registerIpc(): void {
   ipcMain.handle('timers:reset', (_e, id: string) => engine.reset(id));
   ipcMain.handle('timers:segment', (_e, id: string) => engine.segment(id));
   ipcMain.handle('timers:stop', (_e, id: string) => engine.stop(id));
+  ipcMain.handle('timers:skipPhase', (_e, id: string) => engine.skipPhase(id));
   ipcMain.handle('timers:delete', (_e, id: string) => engine.remove(id));
   ipcMain.handle('timers:metas', () => engine.listMetas());
   ipcMain.handle('records:list', (_e, limit?: number) => engine.listRecentRecords(limit ?? 300));
   ipcMain.handle('records:delete', (_e, ids: string[]) => engine.deleteRecords(Array.isArray(ids) ? ids.map(String) : []));
+  ipcMain.handle('stats:daily', () => engine.dailyStats());
   ipcMain.handle('tags:list', () => engine.listTags());
   ipcMain.handle('timers:setTags', (_e, id: string, names: string[]) =>
     engine.setTimerTags(String(id), Array.isArray(names) ? names.map(String) : []));
+  ipcMain.handle('milestones:list', (_e, timerId: string) => engine.listMilestones(String(timerId)));
+  ipcMain.handle('milestones:add', (_e, timerId: string, note: string) => engine.addMilestone(String(timerId), String(note ?? '')));
+  ipcMain.handle('milestones:remove', (_e, id: string) => engine.removeMilestone(String(id)));
   // v3 无边框窗口控制
   ipcMain.handle('win:minimize', () => { win?.minimize(); });
   ipcMain.handle('win:maximize', () => {
@@ -217,8 +231,23 @@ function registerIpc(): void {
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePath) return { ok: false };
-    require('fs').writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf-8');
     return { ok: true, filePath };
+  });
+  ipcMain.handle('data:import', async () => {
+    if (!win) return { ok: false, counts: {} };
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: '导入备份',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (canceled || !filePaths[0]) return { ok: false, counts: {} };
+    try {
+      const payload = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8'));
+      return engine.importData(payload);
+    } catch (e) {
+      return { ok: false, counts: {}, message: '导入失败：' + (e instanceof Error ? e.message : String(e)) };
+    }
   });
 }
 
@@ -260,6 +289,13 @@ app.whenReady().then(async () => {
       new Notification({ title: 'TimeMark 时光标', body: `「${row.name}」倒计时已到点` }).show();
     }
   };
+  engine.onFinishPomodoro = (row, nextPhase) => {
+    if (!Notification.isSupported()) return;
+    const label = nextPhase === 'focus' ? '休息结束，开始专注'
+      : nextPhase === 'long_break' ? '专注完成，进入长休息'
+      : '专注完成，开始休息';
+    new Notification({ title: 'TimeMark 时光标', body: `「${row.name}」${label}` }).show();
+  };
   engine.load();
 
   sync = new SyncClient(db, deviceId);
@@ -267,8 +303,10 @@ app.whenReady().then(async () => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send('sync-status', s);
   };
   sync.onRemoteChange = (table, rowId) => {
-    if (table === 'timer_item') engine.reloadRow(rowId);
+    if (table === 'timer_item') engine.reloadRow(rowId); // 他端改了运行态：作废本地单调基准重新落基
     else if (table === 'tag' || table === 'timer_tag') engine.refreshTags();
+    // 里程碑/记录等没有内存运行时，但渲染层缓存了列表 → 广播让对应视图重拉
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('data-changed', table);
   };
   engine.queueOp = (op) => sync.enqueue(op);
   const auth = sync.restore();

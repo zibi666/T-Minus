@@ -1,5 +1,12 @@
 // 共享格式化工具
 
+/** 本地自然日键 YYYY-MM-DD（统计按本机时区分组，主进程与渲染层共用） */
+export function localDateKey(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** 毫秒 → hh:mm:ss（可含百分秒） */
 export function formatHMS(ms: number, withCs = false): string {
   const neg = ms < 0;

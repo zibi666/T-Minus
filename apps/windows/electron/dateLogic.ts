@@ -1,9 +1,16 @@
 // §3.2 日期倒计时规则：按目标时区自然日计算，不转 UTC 时间戳存储
 
-/** 取某 IANA 时区"今天"的 YYYY-MM-DD（en-CA locale 直接产出 ISO 日期） */
-export function todayInTz(timezoneId: string, nowMs = Date.now()): string {
+/** 取某 IANA 时区"今天"的 YYYY-MM-DD（en-CA locale 直接产出 ISO 日期）；时区缺失或非法时退到本机时区 */
+export function todayInTz(timezoneId?: string | null, nowMs = Date.now()): string {
+  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let tz = timezoneId || local;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+  } catch {
+    tz = local;
+  }
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezoneId,
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
@@ -21,11 +28,12 @@ export function diffCalendarDays(fromDate: string, toDate: string): number {
 
 /** §3.2 剩余天数：目标日期 − 当前日期（均按目标时区自然日）；includeToday 时 +1 */
 export function remainingDays(
-  targetDate: string,
-  timezoneId: string,
-  includeToday: boolean,
+  targetDate?: string | null,
+  timezoneId?: string | null,
+  includeToday = false,
   nowMs = Date.now()
 ): number {
+  if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return 0;
   const today = todayInTz(timezoneId, nowMs);
   const d = diffCalendarDays(today, targetDate);
   return includeToday ? d + 1 : d;

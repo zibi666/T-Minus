@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IconCheck } from './icons';
+import { cssVars } from '../helpers';
 
 export interface SelectOption { value: string; label: string }
 
@@ -60,7 +61,6 @@ export default function Select({ value, options, placeholder = '请选择', aria
       const el = listRef.current.children[hl] as HTMLElement | undefined;
       el?.scrollIntoView({ block: 'nearest' });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // 高亮移动时保持可见
@@ -84,7 +84,6 @@ export default function Select({ value, options, placeholder = '请选择', aria
       window.removeEventListener('mousedown', onDown);
       window.removeEventListener('blur', onBlur);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, closing]);
 
   useEffect(() => () => {
@@ -143,7 +142,7 @@ export default function Select({ value, options, placeholder = '请选择', aria
               role="option"
               aria-selected={o.value === value}
               className={`select-item ${i === hl ? 'hl' : ''} ${o.value === value ? 'cur' : ''}`}
-              style={{ ['--i' as any]: Math.min(6, Math.abs(i - hl)) }}
+              style={cssVars({ '--i': Math.min(6, Math.abs(i - hl)) })}
               onMouseEnter={() => setHl(i)}
               onClick={() => commit(i)}
             >

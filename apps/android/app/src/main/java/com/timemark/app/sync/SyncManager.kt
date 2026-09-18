@@ -58,7 +58,8 @@ class SyncManager(private val c: AppContainer) {
         c.db.miscDao().adoptMilestones(uid)
     }
 
-    /** 登录后把无主数据全部入队上传（比 Windows 的只认领更完整） */
+    /** 登录后把无主数据全部入队上传（比 Windows 的只认领更完整）。
+     *  修复：补全 tag / timer_tag / milestone 三表（原实现遗漏，离线期创建的标签永不同步）。 */
     private suspend fun enqueueAllForUpload(uid: String) {
         val now = System.currentTimeMillis()
         suspend fun op(table: String, rowId: String, payload: String) =
@@ -70,6 +71,15 @@ class SyncManager(private val c: AppContainer) {
         }
         for (r in c.db.recordDao().allRaw()) if (r.user_id == uid && c.db.pendingOpDao().dirtyCount("timer_record", r.id) == 0) {
             op("timer_record", r.id, RowCodec.recordRow(r).toString())
+        }
+        for (g in c.db.miscDao().allTags()) if (g.user_id == uid && c.db.pendingOpDao().dirtyCount("tag", g.id) == 0) {
+            op("tag", g.id, RowCodec.tagRow(g).toString())
+        }
+        for (tt in c.db.miscDao().allTimerTags()) if (tt.user_id == uid && c.db.pendingOpDao().dirtyCount("timer_tag", tt.id) == 0) {
+            op("timer_tag", tt.id, RowCodec.timerTagRow(tt).toString())
+        }
+        for (m in c.db.miscDao().allMilestones()) if (m.user_id == uid && c.db.pendingOpDao().dirtyCount("milestone", m.id) == 0) {
+            op("milestone", m.id, RowCodec.milestoneRow(m).toString())
         }
     }
 
@@ -105,10 +115,14 @@ class SyncManager(private val c: AppContainer) {
                 PushOp(o.operation_id, o.table_name, o.op_type, rowJson, o.base_version)
             })
             val resp = c.api.push(authHeader(token), body)
+            var consumed = 0
             for (r in resp.results) {
                 val opId = r.operation_id ?: continue // 服务端幂等表下轮返回 duplicate + operation_id 收敛
                 c.db.pendingOpDao().deleteById(opId)
+                consumed++
             }
+            // 防御：服务端返回空 results（异常/降级）时直接退出，避免 50 轮重发相同 ops 死循环
+            if (consumed == 0) return
         }
     }
 
@@ -120,11 +134,13 @@ class SyncManager(private val c: AppContainer) {
             val resp = c.api.pull(authHeader(token), cursor, 500)
             if (resp.changes.isEmpty()) return
             var appliedMax = cursor
-            val touched = mutableListOf<Pair<String, String>>()
             for (ch in resp.changes) {
                 appliedMax = maxOf(appliedMax, ch.change_seq)
                 if (ch.origin_device_id == deviceId) continue // 自身提交已在本地
-                if (applyChange(ch)) touched.add(ch.table_name to (ch.payload?.get("id").toString()))
+                if (applyChange(ch) && ch.table_name == "timer_item") {
+                    val rowId = (ch.payload?.get("id") as? JsonPrimitive)?.contentOrNull
+                    if (rowId != null) c.repo.onRemoteApplied(rowId) // 作废本地单调基准，按远端段重落基
+                }
             }
             c.setPullCursor(appliedMax) // 整页成功应用后才推进（§5.3）
             if (!resp.has_more) return

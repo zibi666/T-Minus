@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.timemark.app.core.Contract
 import com.timemark.app.core.Engine
 import com.timemark.app.core.Fmt
 import com.timemark.app.core.Jsons
@@ -61,6 +62,9 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
     val tint = colorFor(t.color)
     val today0 = Fmt.startOfToday()
     val segs = records.filter { it.timer_id == t.id && it.ended_at >= today0 }
+    // 番茄钟判定与逻辑类型（与 ListScreen 一致）
+    val isPomo = Contract.isPomodoro(t.type, Jsons.configJson(t.config_json))
+    val logicalType = Types.logical(t.type, t.config_json)
 
     Column(Modifier.fillMaxSize().background(C.bg).padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -77,20 +81,22 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
         Spacer(Modifier.height(24.dp))
 
         Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
-            when (t.type) {
+            when (logicalType) {
                 Types.PRECISE, Types.POMODORO -> {
-                    val preset = if (t.type == Types.PRECISE) (Jsons.configJson(t.config_json).preset_ms ?: 1)
-                    else (if (s.phase == "focus") (Jsons.configJson(t.config_json).focus_ms ?: 1) else (Jsons.configJson(t.config_json).short_break_ms ?: 1))
+                    val cfg = Jsons.configJson(t.config_json)
+                    // 番茄钟圆环 preset 按当前阶段取（focus/short_break/long_break）
+                    val preset = if (isPomo) Contract.phasePresetMs(cfg.normalized, s.phase) else (cfg.preset_ms ?: 1)
                     CircularProgressIndicator(
-                        progress = { (if (t.run_state == Types.IDLE) 0f else (s.elapsedMs.toFloat() / preset.toFloat())).coerceIn(0f, 1f) },
+                        progress = { (if (t.run_state == Types.IDLE) 0f else (s.elapsedMs.toFloat() / preset.toFloat().coerceAtLeast(1f))).coerceIn(0f, 1f) },
                         modifier = Modifier.size(230.dp), strokeWidth = 10.dp, color = tint, trackColor = C.stroke
                     )
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(Fmt.hms(s.remainingMs), color = C.text, fontSize = 40.sp, fontWeight = FontWeight.Bold)
-                        if (t.type == Types.POMODORO) {
+                        if (isPomo) {
                             Spacer(Modifier.height(4.dp))
+                            val phaseLabel = when (s.phase) { Contract.PHASE_FOCUS -> "专注"; Contract.PHASE_LONG_BREAK -> "长休息"; else -> "休息" }
                             Text(
-                                (if (s.phase == "focus") "专注 · 第 ${s.round} 轮" else "休息") + (if (t.run_state == Types.RUNNING) " · 进行中" else ""),
+                                "$phaseLabel · 第 ${s.round} 轮" + (if (t.run_state == Types.RUNNING) " · 进行中" else ""),
                                 color = C.textLow, fontSize = 12.sp
                             )
                         }
@@ -101,7 +107,7 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
                     Text("正计时" + (if (t.run_state == Types.RUNNING) " · 进行中" else ""), color = C.textLow, fontSize = 12.sp)
                 }
                 else -> {
-                    val cfg = com.timemark.app.core.Jsons.configJson(t.config_json)
+                    val cfg = Jsons.configJson(t.config_json)
                     val left = cfg.target_date?.let { Engine.daysLeft(it, cfg.timezone_id, cfg.include_today, now) }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(if (left != null && left >= 0) "$left" else "0", color = tint, fontSize = 56.sp, fontWeight = FontWeight.Bold)
@@ -114,13 +120,14 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
 
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            when (t.type) {
+            when (logicalType) {
                 Types.PRECISE, Types.STOPWATCH, Types.POMODORO -> {
                     when (t.run_state) {
                         Types.RUNNING -> {
                             ActionButton("暂停", C.amber) { scope.launch { c.repo.pause(t.id) } }
-                            if (t.type == Types.PRECISE || t.type == Types.STOPWATCH) ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
-                            if (t.type == Types.POMODORO) ActionButton("跳过", C.cyan) { scope.launch { c.repo.skipPhase(t.id) } }
+                            // 番茄钟「跳过」，普通倒计时/正计时「分段」
+                            if (isPomo) ActionButton("跳过", C.cyan) { scope.launch { c.repo.skipPhase(t.id) } }
+                            else ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
                             ActionButton("结束", C.danger) { scope.launch { c.repo.stop(t.id) } }
                         }
                         Types.PAUSED -> {
@@ -151,6 +158,7 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
                         when (r.record_type) {
                             Types.RECORD_SEGMENT -> "分段"
                             Types.RECORD_PRECISE -> "完成"
+                            Types.RECORD_STOPWATCH -> "正计时"
                             else -> "计时"
                         }, color = C.text, fontSize = 12.5.sp, modifier = Modifier.weight(1f)
                     )

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { TimerDTO, AuthInfo, SyncStatusInfo } from '../../shared/types';
-import { isPomodoro, getPomodoro, mmss } from '../helpers';
+import { isPomodoro, getPomodoro, mmss, cssVars } from '../helpers';
 import {
   LogoMark, IconSearch, IconArrowRight, IconPlus, IconSync, IconDownload,
   IconLogout, IconUser, IconPin, IconGear
@@ -28,6 +28,7 @@ interface Props {
   sync: SyncStatusInfo;
   onSyncNow: () => void;
   onExport: () => void;
+  onImport: () => void;
   onLogout: () => void;
   onLogin: () => void;
   currentVersion: string;
@@ -46,7 +47,7 @@ function rowValue(t: TimerDTO): string {
   }
   if (t.type === 'PRECISE_COUNTDOWN') {
     if (t.runState === 'running' || t.runState === 'paused') return mmss(t.remainingMs ?? 0);
-    return mmss((t.config as any).preset_ms ?? 0);
+    return mmss(t.config.preset_ms ?? 0);
   }
   return `${Math.floor((t.elapsedMs ?? 0) / 1000)} 秒`; // 正计时只显示秒
 }
@@ -129,10 +130,10 @@ export default function Sidebar(p: Props) {
           <button
             key={t.id}
             className={`t-row ${t.id === p.selectedId ? 'selected' : ''} ${t.runState === 'running' ? 'running' : ''}`}
-            style={{ ['--tc' as any]: t.color, ['--i' as any]: i }}
+            style={cssVars({ '--tc': t.color, '--i': i })}
             onClick={() => p.onSelect(t.id)}
             onDoubleClick={() => p.onOpenClock(t.id)}
-            title={isPomodoro(t) ? `番茄钟 · 专注 ${Math.round(getPomodoro(t).work_ms / 60000)} 分钟 × ${getPomodoro(t).rounds} 轮（双击进入台钟）` : '单击聚焦 · 双击进入台钟'}
+            title={isPomodoro(t) ? `番茄钟 · 专注 ${Math.round(getPomodoro(t).work_ms / 60000)} 分钟 · 每 ${getPomodoro(t).rounds} 轮长休息（双击进入台钟）` : '单击聚焦 · 双击进入台钟'}
           >
             <span className="dot" />
             <span className="t-name">
@@ -153,7 +154,7 @@ export default function Sidebar(p: Props) {
         role="button"
         tabIndex={0}
         onClick={() => setMenuOpen((v) => !v)}
-        title="设置与更新：立即同步 / 导出备份 / 检查更新 / 退出登录"
+        title="设置与更新：立即同步 / 导出导入备份 / 检查更新 / 退出登录"
       >
         <span className="sdot" />
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{syncText}</span>
@@ -180,6 +181,9 @@ export default function Sidebar(p: Props) {
               )}
               <button onClick={() => { setMenuOpen(false); p.onExport(); }}>
                 <IconDownload size={12} /> <span>导出备份</span>
+              </button>
+              <button onClick={() => { setMenuOpen(false); p.onImport(); }}>
+                <IconDownload size={12} /> <span>导入备份</span>
               </button>
               <button onClick={() => p.onCheckUpdate()}>
                 <IconSync size={12} /> <span>

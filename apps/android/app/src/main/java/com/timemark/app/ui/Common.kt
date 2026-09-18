@@ -25,6 +25,12 @@ import com.timemark.app.core.Types
 
 fun typeLabel(type: String): String = Types.TYPE_LABEL[type] ?: type
 
+/** 记录类型 → 中文标签（历史页徽章用）：PRECISE→完成 / SEGMENT→分段 / STOPWATCH→正计时 */
+fun recordLabel(recordType: String): String = Types.RECORD_LABEL[recordType] ?: recordType
+
+fun hexOf(color: Color): String =
+    "#%02X%02X%02X".format((color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt())
+
 fun colorFor(color: String?): Color {
     if (color.isNullOrBlank()) return C.cyan
     return try {
@@ -43,9 +49,9 @@ fun ColorDot(color: String?, size: Int = 12) {
 }
 
 @Composable
-fun TypeBadge(type: String) {
+fun TypeBadge(type: String, label: String? = null) {
     Text(
-        typeLabel(type),
+        label ?: typeLabel(type),
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(C.stroke)

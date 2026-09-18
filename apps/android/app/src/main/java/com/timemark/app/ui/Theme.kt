@@ -1,7 +1,7 @@
 package com.timemark.app.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import com.timemark.app.core.Contract
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -24,7 +24,14 @@ object C {
     val danger = Color(0xFFFF7B72)
 }
 
-val PALETTE = listOf(C.cyan, C.violet, C.mint, C.amber, C.coral, C.blue, C.pink, C.lime)
+/** 计时器色板：取值与顺序的唯一来源在 core/Contract.kt（与 Windows 端逐位相同） */
+val PALETTE_HEX: List<String> = Contract.TIMER_PALETTE
+
+val PALETTE: List<Color> = PALETTE_HEX.map { Color(android.graphics.Color.parseColor(it)) }
+
+/** 新建计时的默认色（契约同一处定义） */
+val DEFAULT_TIMER_COLOR: Color = PALETTE.first()
+
 
 private val DarkScheme = darkColorScheme(
     primary = C.cyan,

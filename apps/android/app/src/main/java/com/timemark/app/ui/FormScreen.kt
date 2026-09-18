@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.timemark.app.core.ConfigJson
+import com.timemark.app.core.Contract
 import com.timemark.app.core.Types
 import com.timemark.app.data.AppContainer
 import com.timemark.app.data.TimerRepository
@@ -47,12 +48,22 @@ import kotlinx.coroutines.launch
 
 private val PRESET_MIN = listOf(1L, 5L, 10L, 25L, 45L, 60L, 90L, 120L)
 
+/** 番茄钟分钟上下界：由契约的毫秒边界换算，双端同一组数 */
+private fun minMin(ms: Long): Long = Math.ceil(ms / 60000.0).toLong()
+private fun maxMin(ms: Long): Long = Math.floor(ms / 60000.0).toLong()
+private val MIN_WORK = minMin(Contract.WORK_MIN)
+private val MAX_WORK = maxMin(Contract.WORK_MAX)
+private val MIN_BREAK = minMin(Contract.BREAK_MIN)
+private val MAX_BREAK = maxMin(Contract.BREAK_MAX)
+private val MIN_LONG = minMin(Contract.LONG_BREAK_MIN)
+private val MAX_LONG = maxMin(Contract.LONG_BREAK_MAX)
+
 @Composable
 fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(Types.PRECISE) }
-    var color by remember { mutableStateOf("#4DC9F0") }
+    var color by remember { mutableStateOf(Contract.DEFAULT_TIMER_COLOR) }
     var remark by remember { mutableStateOf("") }
     var targetDate by remember { mutableStateOf("") }
     var presetMin by remember { mutableStateOf<Long>(25L) }
@@ -67,13 +78,15 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
         if (editId == null) { loaded = true; return@LaunchedEffect }
         val e = c.repo.byId(editId) ?: run { loaded = true; return@LaunchedEffect }
         val cfg = com.timemark.app.core.Jsons.configJson(e.config_json ?: "{}")
-        name = e.name; type = e.type; color = e.color ?: "#4DC9F0"; remark = e.remark ?: ""
+        name = e.name; color = e.color ?: Contract.DEFAULT_TIMER_COLOR; remark = e.remark ?: ""
+        // 逻辑类型：番茄钟（PRECISE + pomodoro 配置）在 UI 上显示为 POMODORO 选中
+        type = com.timemark.app.core.Types.logical(e.type, e.config_json)
         targetDate = cfg.target_date ?: ""
         presetMin = cfg.preset_ms?.let { it / 60000 } ?: 25L
-        focusMin = cfg.focus_ms?.let { it / 60000 } ?: 25L
-        shortMin = cfg.short_break_ms?.let { it / 60000 } ?: 5L
-        longMin = cfg.long_break_ms?.let { it / 60000 } ?: 15L
-        rounds = cfg.rounds_before_long?.toLong() ?: 4L
+        focusMin = cfg.workMs() / 60000
+        shortMin = cfg.shortBreakMs() / 60000
+        longMin = cfg.longBreakMs() / 60000
+        rounds = cfg.roundsBeforeLong().toLong()
         loaded = true
     }
     if (!loaded) {
@@ -108,7 +121,7 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PALETTE.forEach { cc ->
-                val hex = "#%02X%02X%02X".format((cc.red * 255).toInt(), (cc.green * 255).toInt(), (cc.blue * 255).toInt())
+                val hex = hexOf(cc)
                 Box(
                     Modifier
                         .size(26.dp)
@@ -136,10 +149,10 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
                 }
             }
             Types.POMODORO -> {
-                NumField("专注（分钟）", focusMin) { focusMin = it }
-                NumField("短休息（分钟）", shortMin) { shortMin = it }
-                NumField("长休息（分钟）", longMin) { longMin = it }
-                NumField("长休息间隔（轮）", rounds) { rounds = it }
+                NumField("专注（分钟）", focusMin, MIN_WORK, MAX_WORK) { focusMin = it }
+                NumField("短休息（分钟）", shortMin, MIN_BREAK, MAX_BREAK) { shortMin = it }
+                NumField("长休息（分钟）", longMin, MIN_LONG, MAX_LONG) { longMin = it }
+                NumField("长休息间隔（轮）", rounds, Contract.ROUNDS_MIN.toLong(), Contract.ROUNDS_MAX.toLong()) { rounds = it }
             }
             Types.DATE -> {
                 Text("目标日期", color = C.textLow, fontSize = 12.sp)
@@ -167,9 +180,16 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
                         val json = TimerRepository.buildJson(
                             type, targetDate.ifBlank { null }, presetMin, focusMin, shortMin, longMin, rounds
                         )
-                        if (editId == null) c.repo.createTimer(name, type, color, json, remark.ifBlank { null })
-                        else c.repo.updateMeta(editId, name, color, remark.ifBlank { null }, json)
-                        onBack()
+                        // 数据库 type：番茄钟统一存 PRECISE_COUNTDOWN（与 Windows 对齐），其余按逻辑类型存
+                        val dbType = if (type == Types.POMODORO) Types.PRECISE else type
+                        if (editId == null) {
+                            c.repo.createTimer(name, dbType, color, json, remark.ifBlank { null })
+                            onBack()
+                        } else {
+                            // 引擎拒绝（如运行中改时长）必须回显，不能关掉表单什么都没发生
+                            val rejected = c.repo.updateMeta(editId, name, dbType, color, remark.ifBlank { null }, json)
+                            if (rejected == null) onBack() else error = rejected
+                        }
                     }
                 }
                 .padding(vertical = 13.dp),
@@ -196,14 +216,27 @@ private fun TextField(label: String, value: String, onChange: (String) -> Unit) 
 }
 
 @Composable
-private fun NumField(label: String, value: Long, onChange: (Long) -> Unit) {
+private fun NumField(label: String, value: Long, min: Long? = null, max: Long? = null, onChange: (Long) -> Unit) {
     var text by remember(value) { mutableStateOf(value.toString()) }
     Text(label, color = C.textLow, fontSize = 12.sp)
     Spacer(Modifier.height(6.dp))
     OutlinedTextField(
         value = text, onValueChange = { s ->
-            text = s.filter { it.isDigit() }.take(4)
-            text.toLongOrNull()?.let { if (it > 0) onChange(it) }
+            val filtered = s.filter { it.isDigit() }.take(4)
+            val n = filtered.toLongOrNull()
+            if (n != null && n > 0) {
+                val bounded = when {
+                    min != null && max != null -> n.coerceIn(min, max)
+                    min != null -> maxOf(n, min)
+                    max != null -> minOf(n, max)
+                    else -> n
+                }
+                text = bounded.toString()
+                onChange(bounded)
+            } else {
+                // 空串或 0 时不调 onChange（保持父状态为上一个合法值），但 UI 显示用户输入
+                text = filtered
+            }
         },
         modifier = Modifier.fillMaxWidth(),
         colors = OutlinedTextFieldDefaults.colors(
@@ -218,9 +251,10 @@ private fun NumField(label: String, value: Long, onChange: (Long) -> Unit) {
 @Composable
 private fun DateRow(current: String, onChange: (String) -> Unit) {
     val cal = java.util.Calendar.getInstance()
-    var y by remember { mutableStateOf(current.takeIf { it.isNotBlank() }?.take(4)?.toIntOrNull() ?: cal.get(java.util.Calendar.YEAR)) }
-    var m by remember { mutableStateOf(current.takeIf { it.isNotBlank() }?.let { it.substring(5, 7).toIntOrNull() } ?: (cal.get(java.util.Calendar.MONTH) + 1)) }
-    var d by remember { mutableStateOf(current.takeIf { it.isNotBlank() }?.takeLast(2)?.toIntOrNull() ?: cal.get(java.util.Calendar.DAY_OF_MONTH)) }
+    // remember(current)：编辑不同计时器时 current 变化 → y/m/d 状态重置（修复日期不刷新 bug）
+    var y by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.take(4)?.toIntOrNull() ?: cal.get(java.util.Calendar.YEAR)) }
+    var m by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.let { it.substring(5, 7).toIntOrNull() } ?: (cal.get(java.util.Calendar.MONTH) + 1)) }
+    var d by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.takeLast(2)?.toIntOrNull() ?: cal.get(java.util.Calendar.DAY_OF_MONTH)) }
     val dim = java.time.YearMonth.of(y.coerceIn(1900, 2200), m.coerceIn(1, 12)).lengthOfMonth()
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

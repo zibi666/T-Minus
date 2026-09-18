@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TimerDTO } from '../../shared/types';
-import { formatHMS, formatElapsed } from '../../shared/format';
-import { isPomodoro, getPomodoro, mmss, glowColor, lighten, formatSeconds, PomoPhase } from '../helpers';
+import { formatHMS } from '../../shared/format';
+import { isPomodoro, getPomodoro, mmss, glowColor, formatSeconds, cssVars } from '../helpers';
 import { IconClose, IconPause, IconPlay, IconSegment } from './icons';
 
 const TYPE_LABEL: Record<string, string> = {
@@ -12,7 +12,6 @@ const TYPE_LABEL: Record<string, string> = {
 
 interface Props {
   timer: TimerDTO;
-  pomoPhase: PomoPhase | null;
   onPause: () => void;
   onResume: () => void;
   onStart: () => void;
@@ -21,7 +20,7 @@ interface Props {
   onClose: () => void;
 }
 
-export default function FullscreenClock({ timer: t, pomoPhase, onPause, onResume, onStart, onSkip, onSegment, onClose }: Props) {
+export default function FullscreenClock({ timer: t, onPause, onResume, onStart, onSkip, onSegment, onClose }: Props) {
   const [closing, setClosing] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -47,7 +46,9 @@ export default function FullscreenClock({ timer: t, pomoPhase, onPause, onResume
   const paused = t.runState === 'paused';
   const isPomo = isPomodoro(t);
   const cfg = isPomo ? getPomodoro(t) : null;
-  const phase: PomoPhase = pomoPhase ?? { phase: 'work', round: 1 };
+  const phase = t.pomoPhase ?? 'focus';
+  const round = t.pomoRound ?? 1;
+  const cyclePos = cfg ? ((round - 1) % cfg.rounds) + 1 : 1;
 
   let giant: React.ReactNode;
   let sub: React.ReactNode = null;
@@ -61,12 +62,15 @@ export default function FullscreenClock({ timer: t, pomoPhase, onPause, onResume
       ? <>目标日 {t.targetDate} 就是今天{t.remark ? ` · ${t.remark}` : ''}</>
       : <>距离 {t.targetDate}{t.remark ? ` · ${t.remark}` : ''} 还有 {Math.abs(d)} 天</>;
   } else if (t.type === 'PRECISE_COUNTDOWN') {
-    const preset = (t.config as any).preset_ms ?? 0;
+    const preset = t.config.preset_ms ?? 0;
     const ms = running || paused ? (t.remainingMs ?? 0) : preset;
     giant = formatHMS(ms);
     if (isPomo && cfg) {
-      const isWork = phase.phase === 'work';
-      sub = `第 ${phase.round}/${cfg.rounds} ${isWork ? '轮 · 专注中' : '轮 · 休息中'} · ${isWork ? '专注' : '休息'} ${Math.round((isWork ? cfg.work_ms : cfg.break_ms) / 60000)} 分钟`;
+      const isWork = phase === 'focus';
+      const isLong = phase === 'long_break';
+      const phaseLabel = isWork ? '专注中' : (isLong ? '长休息中' : '休息中');
+      const phaseMin = Math.round((isWork ? cfg.work_ms : (isLong ? (cfg.long_break_ms ?? 15 * 60000) : cfg.break_ms)) / 60000);
+      sub = `第 ${round} 轮 · ${phaseLabel} · 本段 ${phaseMin} 分钟 · 每 ${cfg.rounds} 轮长休息`;
     } else {
       sub = running || paused
         ? <>总时长 {formatHMS(preset)} · 剩余 {preset > 0 ? Math.round(((t.remainingMs ?? 0) / preset) * 100) : 0}%</>
@@ -78,10 +82,7 @@ export default function FullscreenClock({ timer: t, pomoPhase, onPause, onResume
   }
 
   const dotStyle = { background: t.color } as React.CSSProperties;
-  const glowVars = {
-    ['--tc' as any]: t.color,
-    ['--tc-glow' as any]: glowColor(t.color, 0.14)
-  } as React.CSSProperties;
+  const glowVars = cssVars({ '--tc': t.color, '--tc-glow': glowColor(t.color, 0.14) });
 
   return (
     <div className={`clock-mask ${closing ? 'closing' : ''}`} style={glowVars}>
@@ -112,8 +113,8 @@ export default function FullscreenClock({ timer: t, pomoPhase, onPause, onResume
           <div className="round-dots">
             {Array.from({ length: cfg.rounds }, (_, i) => {
               const n = i + 1;
-              const done = n < phase.round;
-              const cur = n === phase.round && (running || paused);
+              const done = n < cyclePos;
+              const cur = n === cyclePos && (running || paused);
               return (
                 <React.Fragment key={n}>
                   {n > 1 && <span className="rd-sep" />}

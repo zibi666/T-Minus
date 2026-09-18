@@ -104,16 +104,30 @@ data class PendingOpEntity(
     val state: String = "queued"
 )
 
+// ---- 统计投影（只取聚合用到的列，避免把 run_json / config_json 大字段读进内存）----
+
+/** 含已删除计时：删掉的计时其历史记录仍要计入当天统计 */
+data class TimerStatRow(val id: String, val type: String, val config_json: String?)
+
+data class RecordStatRow(val timer_id: String, val ended_at: Long, val record_type: String, val duration_sec: Long)
+
 @Dao
 interface TimerDao {
     @Query("SELECT * FROM timer_item WHERE deleted = 0 ORDER BY pinned DESC, starred DESC, updated_at DESC")
     fun observeLive(): Flow<List<TimerItemEntity>>
+
+    @Query("SELECT id, type, config_json FROM timer_item")
+    fun observeStatFlags(): Flow<List<TimerStatRow>>
 
     @Query("SELECT * FROM timer_item WHERE id = :id")
     suspend fun byId(id: String): TimerItemEntity?
 
     @Query("SELECT * FROM timer_item WHERE run_state = 'running'")
     suspend fun runningAll(): List<TimerItemEntity>
+
+    /** 闹钟排程用：运行中的计时 + 日期倒计时（目标日零点提醒） */
+    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND (run_state = 'running' OR type = 'DATE_COUNTDOWN')")
+    suspend fun allForAlarm(): List<TimerItemEntity>
 
     @Query("SELECT * FROM timer_item")
     suspend fun allRaw(): List<TimerItemEntity>
@@ -128,6 +142,9 @@ interface TimerDao {
 interface RecordDao {
     @Query("SELECT * FROM timer_record WHERE deleted = 0 ORDER BY ended_at DESC")
     fun observeAll(): Flow<List<TimerRecordEntity>>
+
+    @Query("SELECT timer_id, ended_at, record_type, duration_sec FROM timer_record WHERE deleted = 0")
+    fun observeStatRows(): Flow<List<RecordStatRow>>
 
     @Query("SELECT * FROM timer_record WHERE id = :id")
     suspend fun byId(id: String): TimerRecordEntity?
@@ -152,6 +169,10 @@ interface MiscDao {
     @Query("UPDATE tag SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptTags(uid: String)
     @Query("UPDATE timer_tag SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptTimerTags(uid: String)
     @Query("UPDATE milestone SET user_id = :uid WHERE user_id IS NULL") suspend fun adoptMilestones(uid: String)
+    // 登录后孤儿数据入队上传用（SyncManager.enqueueAllForUpload）
+    @Query("SELECT * FROM tag") suspend fun allTags(): List<TagEntity>
+    @Query("SELECT * FROM timer_tag") suspend fun allTimerTags(): List<TimerTagEntity>
+    @Query("SELECT * FROM milestone") suspend fun allMilestones(): List<MilestoneEntity>
 }
 
 @Dao
@@ -166,6 +187,9 @@ interface PendingOpDao {
 
     @Query("SELECT COUNT(*) FROM pending_ops WHERE table_name = :table AND row_id = :rowId AND state = 'queued'")
     suspend fun dirtyCount(table: String, rowId: String): Int
+
+    @Query("SELECT COUNT(*) FROM pending_ops WHERE state = 'queued'")
+    suspend fun queuedCount(): Int
 
     @Query("SELECT COUNT(*) FROM pending_ops WHERE state = 'queued'")
     fun observeQueuedCount(): Flow<Int>

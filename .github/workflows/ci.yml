@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contract:
+    name: 版本号与契约 fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: VERSION 与三端一致
+        run: node tools/version.mjs
+      - name: fixture 是合法 JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('shared/contract/fixtures/contract.json','utf8'))"
+
+  windows:
+    name: Windows 端（typecheck / lint / test）
+    runs-on: windows-latest
+    defaults:
+      run: { shell: bash }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/windows/package-lock.json
+      - run: npm ci
+        working-directory: apps/windows
+      - run: npm run lint
+        working-directory: apps/windows
+      - run: npm run typecheck
+        working-directory: apps/windows
+      - name: 单元测试（契约 fixture + 引擎纯函数 + 仓库守卫）
+        run: npm test
+        working-directory: apps/windows
+
+  android:
+    name: Android 端（单元测试 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+      - name: 单元测试（含跨端契约 fixture 一致性）
+        run: ./gradlew :app:testDebugUnitTest
+        working-directory: apps/android
+      - name: Debug 构建
+        run: ./gradlew :app:assembleDebug
+        working-directory: apps/android
+
+  backend:
+    name: 同步服务端（编译）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: 列白名单与客户端契约一致
+        run: node tools/check-sync-columns.mjs
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('backend/pom.xml') }}
+      - run: mvn -B -q -DskipTests package
+        working-directory: backend

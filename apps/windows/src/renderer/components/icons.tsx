@@ -1,3 +1,4 @@
+import { TIMER_PALETTE } from '../../shared/contract';
 // 线性 SVG 图标集（lucide 风格：24 viewBox / stroke 2 / 圆头）——替代所有 emoji
 import React from 'react';
 
@@ -78,11 +79,11 @@ export const IconSegment = (p: IconProps) =>
   </>);
 
 export const IconStar = (p: IconProps & { filled?: boolean }) =>
-  base({ ...p }, <path d="M12 2.6l2.9 5.9 6.5.94-4.7 4.58 1.1 6.48L12 17.44 6.2 20.5l1.1-6.48-4.7-4.58 6.5-.94z" />, !!(p as any).filled);
+  base({ ...p }, <path d="M12 2.6l2.9 5.9 6.5.94-4.7 4.58 1.1 6.48L12 17.44 6.2 20.5l1.1-6.48-4.7-4.58 6.5-.94z" />, !!p.filled);
 
 export const IconPin = (p: IconProps & { filled?: boolean }) => {
   const { size = 16, className } = p;
-  const filled = !!(p as any).filled;
+  const filled = !!p.filled;
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24"
       fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"
@@ -189,8 +190,8 @@ export function LogoMark({ size = 36 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id="lg-logo" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#4DC9F0" />
-          <stop offset="100%" stopColor="#9381FF" />
+          <stop offset="0%" stopColor={TIMER_PALETTE[0]} />
+          <stop offset="100%" stopColor={TIMER_PALETTE[1]} />
         </linearGradient>
       </defs>
       {/* 轨道 + 270° 青紫渐变倒计时环（12 点起点，圆头） */}

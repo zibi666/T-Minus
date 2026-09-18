@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TimerMeta, RecordDTO } from '../../shared/types';
-import { formatHMS, formatRemaining } from '../../shared/format';
-import { isPomodoro, getPomodoro, startOfToday, localDateKey, getSegName, setSegName } from '../helpers';
+import { RECORD, TIMER_PALETTE, normalizePomodoro } from '../../shared/contract';
+import { formatHMS, formatRemaining, localDateKey } from '../../shared/format';
+import { isPomodoro, startOfToday, getSegName, setSegName, cssVars } from '../helpers';
 import { IconClose, IconArrowRight, IconTrash } from './icons';
 import Select from './Select';
 
-/** 分段占比条用色：8 色轮替，相邻段（含跨循环相邻）均不同色 */
-const BAR_COLORS = ['#4DC9F0', '#9381FF', '#21E0C4', '#FFB224', '#FF6B6B', '#5A9EFF', '#F472B6', '#A3E635'];
+/** 分段占比条用色：契约 8 色轮替，相邻段（含跨循环相邻）均不同色 */
+const BAR_COLORS = TIMER_PALETTE;
 
 type RangeKey = 'today' | '7d' | '30d' | 'all';
 type KindKey = 'all' | 'pomodoro' | 'precise' | 'stopwatch' | 'date';
@@ -17,6 +18,18 @@ function kindOf(t: TimerMeta): KindKey {
   if (t.type === 'PRECISE_COUNTDOWN') return 'precise';
   if (t.type === 'STOPWATCH') return 'stopwatch';
   return 'date';
+}
+
+/**
+ * 番茄钟休息段不入历史卡片：
+ * 新记录按 record_type 直接判定；v0.5.x 之前的记录没写阶段，只能退回「时长等于某个休息档」的猜测。
+ */
+function isPomodoroBreak(rec: RecordDTO, timerIsPomodoro: boolean, config: unknown): boolean {
+  if (rec.recordType === RECORD.POMODORO_BREAK) return true;
+  if (!timerIsPomodoro || rec.recordType !== RECORD.PRECISE) return false;
+  const p = normalizePomodoro(config);
+  const ms = rec.durationSec * 1000;
+  return ms === p.break_ms || ms === p.long_break_ms;
 }
 
 const KIND_LABEL: Record<KindKey, string> = { all: '全部', pomodoro: '番茄钟', precise: '倒计时', stopwatch: '正计时', date: '日期' };
@@ -54,8 +67,8 @@ function buildEntries(records: RecordDTO[], metas: TimerMeta[], since: number, u
     if (r.endedAt < since || r.endedAt > until) continue;
     const t = byId.get(r.timerId);
     if (!t) continue;
-    // 番茄钟休息段不入历史（时长与休息配置一致的 PRECISE 记录）
-    if (isPomodoro(t) && r.recordType === 'PRECISE' && r.durationSec * 1000 === getPomodoro(t).break_ms) continue;
+    // 番茄钟休息段不入历史卡片（详见 isPomodoroBreak）
+    if (isPomodoroBreak(r, isPomodoro(t), t.config)) continue;
     const k = `${r.timerId}:${r.sessionId ?? 'solo-' + r.id}`;
     const arr = groups.get(k) ?? [];
     arr.push(r);
@@ -271,7 +284,7 @@ export default function HistoryView({ records, metas, onChanged }: Props) {
           const open = openKeys.has(e.key);
           if (e.segs.length === 0) {
             return (
-              <div className="rec-card single clickable" key={e.key} style={{ ['--i' as any]: i }} onClick={() => openDetail(e.key)} title="点击查看详情">
+              <div className="rec-card single clickable" key={e.key} style={cssVars({ '--i': i })} onClick={() => openDetail(e.key)} title="点击查看详情">
                 <div className="rec-single-main">
                   <div className="rec-single-name">
                     <span className="cdot" style={{ background: e.color }} />
@@ -289,7 +302,7 @@ export default function HistoryView({ records, metas, onChanged }: Props) {
             <div
               className={`rec-card clickable ${open ? 'open' : ''}`}
               key={e.key}
-              style={{ ['--i' as any]: i }}
+              style={cssVars({ '--i': i })}
               onClick={() => openDetail(e.key)}
               title="点击查看详情"
             >

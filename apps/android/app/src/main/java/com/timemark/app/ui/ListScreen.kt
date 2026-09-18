@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.timemark.app.core.ConfigJson
+import com.timemark.app.core.Contract
 import com.timemark.app.core.Engine
 import com.timemark.app.core.Fmt
 import com.timemark.app.core.Jsons
@@ -57,7 +58,11 @@ import kotlinx.coroutines.launch
 fun rememberNow(): Long {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        while (true) { now = System.currentTimeMillis(); delay(500) }
+        while (true) {
+            now = System.currentTimeMillis()
+            // 对齐下一个整秒边界刷新：秒数跳变准确 + 每秒仅 1 次重组（比固定 500ms 省一半）
+            delay(1000 - (now % 1000))
+        }
     }
     return now
 }
@@ -65,24 +70,16 @@ fun rememberNow(): Long {
 @Composable
 fun ListScreen(c: AppContainer, openDetail: (String) -> Unit, openForm: () -> Unit, openHistory: () -> Unit, openLogin: () -> Unit) {
     val timers by c.repo.observeTimers().collectAsState(initial = emptyList())
-    val records by c.repo.observeRecords().collectAsState(initial = emptyList())
-    val journal by c.journal.observe().collectAsState(initial = emptyMap())
+    val dayStats by c.repo.observeDailyStats().collectAsState(initial = emptyList())
     val loggedIn by c.auth.loggedIn.collectAsState(initial = false)
     val scope = rememberCoroutineScope()
     val now = rememberNow()
 
-    val today0 = Fmt.startOfToday()
     val day = Fmt.dayKey(now)
-    val js = journal[day] ?: com.timemark.app.data.DayStat()
-    val pomoIds = timers.filter { it.type == Types.POMODORO }.map { it.id }.toSet()
-    var focusMs = js.workMs
-    var rounds = js.workCount
-    var marks = 0
-    for (r in records) {
-        if (r.ended_at < today0) continue
-        if (r.record_type == Types.RECORD_SEGMENT) { marks++; focusMs += r.duration_sec * 1000 }
-        else if (!pomoIds.contains(r.timer_id)) { focusMs += r.duration_sec * 1000; rounds += 1 }
-    }
+    val today = dayStats.firstOrNull { it.day == day }
+    val focusMs = today?.focusMs ?: 0L
+    val rounds = today?.rounds ?: 0
+    val marks = today?.marks ?: 0
 
     Scaffold(
         containerColor = C.bg,
@@ -112,7 +109,7 @@ fun ListScreen(c: AppContainer, openDetail: (String) -> Unit, openForm: () -> Un
                 StatBlock("今日专注", Fmt.hms(focusMs))
                 StatBlock("完成轮次", rounds.toString())
                 StatBlock("累计打点", marks.toString())
-                StatBlock("连续记录", streakDays(records, journal, now).toString() + " 天")
+                StatBlock("连续记录", streakDays(dayStats).toString() + " 天")
             }
             Spacer(Modifier.height(12.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -123,19 +120,14 @@ fun ListScreen(c: AppContainer, openDetail: (String) -> Unit, openForm: () -> Un
     }
 }
 
-private fun streakDays(
-    records: List<com.timemark.app.data.TimerRecordEntity>,
-    journal: Map<String, com.timemark.app.data.DayStat>,
-    now: Long
-): Int {
+/** 连续记录天数：从有产出（专注时长 / 轮次 / 打点）的日子往回连 */
+private fun streakDays(stats: List<com.timemark.app.data.DayStat>): Int {
     val days = HashSet<String>()
-    for (r in records) days.add(Fmt.dayKey(r.ended_at))
-    for (k in journal.keys) if (journal[k]!!.workCount > 0 || journal[k]!!.workMs > 0) days.add(k)
+    for (s in stats) if (s.focusMs > 0 || s.rounds > 0 || s.marks > 0) days.add(s.day)
     var streak = 0
-    val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
-    fun key(cal: java.util.Calendar): String = Fmt.dayKey(cal.timeInMillis)
-    if (!days.contains(key(cal))) cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
-    while (days.contains(key(cal))) { streak++; cal.add(java.util.Calendar.DAY_OF_MONTH, -1) }
+    var cursor = java.time.LocalDate.now()
+    if (!days.contains(cursor.toString())) cursor = cursor.minusDays(1)
+    while (days.contains(cursor.toString())) { streak++; cursor = cursor.minusDays(1) }
     return streak
 }
 
@@ -144,6 +136,10 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
     val s = Engine.live(t.type, t.run_state, t.run_json, t.config_json, now)
     val tint = colorFor(t.color)
     val running = t.run_state == Types.RUNNING
+    // 番茄钟判定：type=PRECISE 且 config 含 pomodoro
+    val isPomo = Contract.isPomodoro(t.type, Jsons.configJson(t.config_json))
+    // UI 显示用逻辑类型（番茄钟→POMODORO，其余→原 type）
+    val logicalType = Types.logical(t.type, t.config_json)
 
     Column(
         Modifier
@@ -167,7 +163,7 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
         }
         Spacer(Modifier.height(10.dp))
 
-        when (t.type) {
+        when (logicalType) {
             Types.DATE -> {
                 val cfg = Jsons.configJson(t.config_json)
                 val left = cfg.target_date?.let { Engine.daysLeft(it, cfg.timezone_id, cfg.include_today, now) }
@@ -193,8 +189,9 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
             }
             Types.POMODORO -> {
                 Text(Fmt.hms(s.remainingMs), color = if (running) tint else C.text, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                val phaseLabel = when (s.phase) { Contract.PHASE_FOCUS -> "专注"; Contract.PHASE_LONG_BREAK -> "长休息"; else -> "休息" }
                 Text(
-                    (if (s.phase == "focus") "专注 · 第 ${s.round} 轮" else "休息") + (if (running) " · 进行中" else ""),
+                    "$phaseLabel · 第 ${s.round} 轮" + (if (running) " · 进行中" else ""),
                     color = C.textLow, fontSize = 12.sp
                 )
             }
@@ -202,13 +199,14 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
 
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            when (t.type) {
+            when (logicalType) {
                 Types.PRECISE, Types.STOPWATCH, Types.POMODORO -> {
                     when (t.run_state) {
                         Types.RUNNING -> {
                             ActionButton("暂停", C.amber) { scope.launch { c.repo.pause(t.id) } }
-                            if (t.type != Types.STOPWATCH) ActionButton("跳过", C.cyan) { scope.launch { c.repo.skipPhase(t.id); } }
-                            if (t.type == Types.PRECISE) ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
+                            // 番茄钟显示「跳过」，普通倒计时/正计时显示「分段」
+                            if (isPomo) ActionButton("跳过", C.cyan) { scope.launch { c.repo.skipPhase(t.id) } }
+                            else ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
                             ActionButton("结束", C.danger) { scope.launch { c.repo.stop(t.id) } }
                         }
                         Types.PAUSED -> {

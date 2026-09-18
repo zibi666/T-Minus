@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { TimerDTO, TimerMeta, AuthInfo, SyncStatusInfo, RecordDTO, RunState, PomodoroInfo } from '../shared/types';
-import { formatRemaining } from '../shared/format';
+import { TimerDTO, TimerMeta, AuthInfo, SyncStatusInfo, RecordDTO, RunState, DayStatDTO } from '../shared/types';
+import { formatRemaining, localDateKey } from '../shared/format';
 import Sidebar, { FilterKey } from './components/Sidebar';
 import FocusStage, { StageActions } from './components/FocusStage';
 import HistoryView from './components/HistoryView';
@@ -8,13 +8,10 @@ import FullscreenClock from './components/FullscreenClock';
 import TimerForm, { EditTarget } from './components/TimerForm';
 import LoginModal from './components/LoginModal';
 import { EmptyArt, IconStar, IconPin, IconPencil, IconTrash, IconMinus, IconSquare, IconClose } from './components/icons';
-import {
-  isPomodoro, getPomodoro, formatFocus, startOfToday, localDateKey,
-  journalAdd, PomoJournal, loadJournal, PomoPhase, loadPomoState, savePomoState
-} from './helpers';
+import { isPomodoro, getPomodoro, formatFocus } from './helpers';
 
-// 同步服务地址已内置（与主进程 syncClient 一致），不向用户暴露配置项
-const SYNC_SERVER = 'http://118.195.133.25:18080';
+/** 按天索引的专注统计 */
+type StatMap = Record<string, DayStatDTO>;
 
 export default function App() {
   const [timers, setTimers] = useState<TimerDTO[]>([]);
@@ -47,19 +44,17 @@ export default function App() {
   }, []);
   const doOpenRelease = useCallback(() => { void window.timemark.openReleasePage(); }, []);
 
-  // ---- 番茄钟循环状态（渲染层驱动；每阶段 = 引擎一次 deadline 精确倒计时，绝不 tick 累加） ----
-  const [pomoState, setPomoState] = useState<Record<string, PomoPhase>>(loadPomoState);
-  const pomoStateRef = useRef(pomoState);
-  const [journal, setJournal] = useState<PomoJournal>(loadJournal);
+  // ---- 专注统计（主进程按天聚合已同步的 timer_record；渲染层只读展示） ----
+  const [dayStats, setDayStats] = useState<StatMap>({});
   const prevRun = useRef<Map<string, RunState>>(new Map());
-  const transitioning = useRef<Set<string>>(new Set()); // 阶段切换中：抑制到点误判
-  const manual = useRef<Set<string>>(new Set());         // 用户主动重置/跳过：抑制自动推进
-
-  function setPomo(next: Record<string, PomoPhase>) {
-    pomoStateRef.current = next;
-    setPomoState(next);
-    savePomoState(next);
-  }
+  const prevPhase = useRef<Map<string, string>>(new Map());
+  const refreshStats = useCallback(() => {
+    window.timemark.dailyStats().then((rows) => {
+      const m: StatMap = {};
+      for (const r of rows) m[r.day] = r;
+      setDayStats(m);
+    }).catch(() => {});
+  }, []);
 
   const refreshMetas = useCallback(() => {
     window.timemark.listMetas().then(setMetas).catch(() => {});
@@ -69,6 +64,12 @@ export default function App() {
     window.timemark.listRecords(400).then(setRecords).catch(() => { /* 本地无记录可忽略 */ });
     refreshMetas(); // 含已删除计时，历史页据此保留记录
   }, [refreshMetas]);
+
+  /** 历史与概览同源（timer_record），必须成对刷新，否则两侧口径会短暂不一致 */
+  const refreshLedger = useCallback(() => {
+    refreshRecords();
+    refreshStats();
+  }, [refreshRecords, refreshStats]);
 
   // ---- 即时反馈与渲染减负 ----
   const lastSyncRef = useRef<SyncStatusInfo | null>(null);
@@ -98,71 +99,36 @@ export default function App() {
     window.timemark.list().then(setTimers);
     window.timemark.authState().then(setAuth);
     window.timemark.syncStatus().then(applySync);
-    refreshRecords();
+    refreshLedger();
     const offTick = window.timemark.onTick(applyTick);
     const offSync = window.timemark.onSyncStatus(applySync);
+    // 同步拉回的远程变更（里程碑/记录/标签）本地没有内存运行时，需主动重拉
+    const offData = window.timemark.onDataChanged((table) => {
+      if (table === 'timer_record' || table === 'timer_item') refreshLedger();
+    });
     return () => {
-      offTick && offTick();
-      offSync && offSync();
+      offTick?.();
+      offSync?.();
+      offData?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshRecords]);
+  }, [refreshLedger]);
 
-  /** 500ms tick：更新列表 + 监测 running→idle（自然到点）驱动番茄钟循环 */
+  /** 500ms tick：更新列表。番茄钟阶段推进已由主进程引擎自动完成（后台/托盘也走），
+   *  渲染层仅检测 running→idle（普通倒计时到点）或番茄钟阶段切换 → 刷新记录与今日统计 */
   function applyTick(p: { now: number; timers: TimerDTO[] }) {
     setTimers(p.timers);
-    const finished: TimerDTO[] = [];
+    let changed = false;
     for (const t of p.timers) {
       const prev = prevRun.current.get(t.id);
       prevRun.current.set(t.id, t.runState);
-      if (prev === 'running' && t.runState === 'idle') finished.push(t);
+      if (prev === 'running' && t.runState === 'idle') changed = true; // 普通倒计时/正计时到点
+      const pp = prevPhase.current.get(t.id);
+      const cp = t.pomoPhase ?? '';
+      prevPhase.current.set(t.id, cp);
+      if (pp !== undefined && pp !== cp && cp !== '') changed = true; // 番茄钟阶段推进
     }
-    if (finished.length === 0) return;
-    refreshRecords(); // 自然到点会写入记录 → 刷新今日统计
-    for (const t of finished) {
-      if (isPomodoro(t) && !transitioning.current.has(t.id) && !manual.current.has(t.id)) {
-        void advanceAfterPhase(t.id);
-      }
-    }
+    if (changed) refreshLedger();
   }
-
-  /** 番茄钟阶段自然到点：专注→休息/完轮；休息→下一轮专注 */
-  async function advanceAfterPhase(id: string) {
-    const t = timersRef.current.find((x) => x.id === id);
-    if (!t) return;
-    const cfg = getPomodoro(t);
-    const cur = pomoStateRef.current[id] ?? { phase: 'work' as const, round: 1 };
-    if (cur.phase === 'work') {
-      setJournal((j) => journalAdd(j, { workCount: 1, workMs: cfg.work_ms }));
-      if (cur.round < cfg.rounds) {
-        await startPhase(id, cfg, 'break', cur.round);
-      } else {
-        const next = { ...pomoStateRef.current };
-        delete next[id];
-        setPomo(next); // 整轮循环完成
-      }
-    } else {
-      setJournal((j) => journalAdd(j, { breakMs: cfg.break_ms }));
-      await startPhase(id, cfg, 'work', cur.round + 1);
-    }
-  }
-
-  /** 开启某阶段：先把 preset_ms 更新为阶段时长（引擎到点记录才准确），再按 durationMs 启动 */
-  async function startPhase(id: string, cfg: PomodoroInfo, phase: 'work' | 'break', round: number) {
-    transitioning.current.add(id);
-    try {
-      setPomo({ ...pomoStateRef.current, [id]: { phase, round } });
-      const ms = phase === 'work' ? cfg.work_ms : cfg.break_ms;
-      await window.timemark.update(id, { config: { schema_version: 1, preset_ms: ms, pomodoro: cfg } });
-      mergeDto(await window.timemark.start(id, { durationMs: ms }));
-    } finally {
-      transitioning.current.delete(id);
-    }
-  }
-
-  // 定时器镜像（异步回调里读最新列表）
-  const timersRef = useRef<TimerDTO[]>([]);
-  useEffect(() => { timersRef.current = timers; }, [timers]);
 
   const sorted = useMemo(() => {
     return [...timers].sort((a, b) => {
@@ -212,29 +178,13 @@ export default function App() {
     [timers, fullscreenId]
   );
 
-  // ---- 今日概览统计 ----
+  // ---- 今日概览统计（口径由主进程按已同步记录聚合，双端一致） ----
+  const EMPTY_STAT: DayStatDTO = { day: '', focusMs: 0, rounds: 0, marks: 0 };
   const stats = useMemo(() => {
-    const todayKey = localDateKey(Date.now());
-    const j = journal[todayKey] ?? { workCount: 0, workMs: 0, breakMs: 0 };
-    const pomoIds = new Set(timers.filter(isPomodoro).map((t) => t.id));
-    const since = startOfToday();
-    let focusMs = j.workMs;
-    let marks = 0;
-    let extraRounds = 0; // 非番茄钟的完整计时次数（倒计时到点 / 正计时结算）
+    const today = dayStats[localDateKey(Date.now())] ?? EMPTY_STAT;
     const daySet = new Set<string>();
-    for (const r of records) {
-      daySet.add(localDateKey(r.endedAt));
-      if (r.endedAt < since) continue;
-      if (r.recordType === 'SEGMENT') {
-        marks++;
-        focusMs += r.durationSec * 1000;
-      } else if (!pomoIds.has(r.timerId)) {
-        focusMs += r.durationSec * 1000; // 番茄钟专注走 journal，避免休息段混入
-        extraRounds += 1; // 完整跑完一次也计一轮专注
-      }
-    }
-    for (const k of Object.keys(journal)) {
-      if (journal[k].workCount > 0 || journal[k].workMs > 0) daySet.add(k);
+    for (const [day, s] of Object.entries(dayStats)) {
+      if (s.focusMs > 0 || s.rounds > 0 || s.marks > 0) daySet.add(day);
     }
     let streak = 0;
     const cursor = new Date();
@@ -243,81 +193,25 @@ export default function App() {
       streak++;
       cursor.setDate(cursor.getDate() - 1);
     }
-    return { focusMs, rounds: j.workCount + extraRounds, marks, streak };
-  }, [records, timers, journal]);
+    return { focusMs: today.focusMs, rounds: today.rounds, marks: today.marks, streak };
+  }, [dayStats]);
 
-  // ---- 用户动作 ----
-  async function pomoStart(t: TimerDTO) {
-    const cfg = getPomodoro(t);
-    const cur = pomoStateRef.current[t.id];
-    if (!cur) await startPhase(t.id, cfg, 'work', 1);
-    else await startPhase(t.id, cfg, cur.phase, cur.round);
-  }
-
-  async function pomoSkip(t: TimerDTO) {
-    const cfg = getPomodoro(t);
-    const cur = pomoStateRef.current[t.id] ?? { phase: 'work' as const, round: 1 };
-    manual.current.add(t.id);
-    try {
-      mergeDto(await window.timemark.reset(t.id));
-      // 跳过也如实计账：专注段计入专注时长与完成轮次，休息段计入休息时长（>5s 才计，防误触）
-      if (t.runState === 'running' || t.runState === 'paused') {
-        const phaseMs = cur.phase === 'work' ? cfg.work_ms : cfg.break_ms;
-        const elapsed = Math.max(0, Math.min(phaseMs, phaseMs - (t.remainingMs ?? phaseMs)));
-        if (elapsed > 5000) {
-          if (cur.phase === 'work') setJournal((j) => journalAdd(j, { workCount: 1, workMs: elapsed }));
-          else setJournal((j) => journalAdd(j, { breakMs: elapsed }));
-        }
-      }
-      const next = { ...pomoStateRef.current };
-      const finishCycle = cur.phase === 'work' ? cur.round >= cfg.rounds : cur.round >= cfg.rounds;
-      if (finishCycle) {
-        delete next[t.id];
-        setPomo(next);
-      } else if (cur.phase === 'work') {
-        await startPhase(t.id, cfg, 'break', cur.round);
-      } else {
-        await startPhase(t.id, cfg, 'work', cur.round + 1);
-      }
-    } finally {
-      manual.current.delete(t.id);
-    }
-  }
-
-  async function pomoReset(t: TimerDTO) {
-    manual.current.add(t.id);
-    try {
-      mergeDto(await window.timemark.reset(t.id));
-      const next = { ...pomoStateRef.current };
-      delete next[t.id];
-      setPomo(next);
-    } finally {
-      manual.current.delete(t.id);
-    }
-  }
-
+  // ---- 用户动作（番茄钟阶段推进已由引擎接管，渲染层直接调 IPC） ----
   function buildActions(t: TimerDTO): StageActions {
     return {
-      start: () => (isPomodoro(t) ? pomoStart(t) : window.timemark.start(t.id).then(mergeDto)),
+      start: () => window.timemark.start(t.id).then((d) => { mergeDto(d); refreshLedger(); }),
       pause: () => window.timemark.pause(t.id).then(mergeDto),
       resume: () => window.timemark.resume(t.id).then(mergeDto),
-      reset: () => (isPomodoro(t) ? pomoReset(t) : window.timemark.reset(t.id).then(mergeDto)),
-      skip: () => { if (isPomodoro(t)) void pomoSkip(t); },
+      reset: () => window.timemark.reset(t.id).then((d) => { mergeDto(d); refreshLedger(); }),
+      skip: () => { if (isPomodoro(t)) window.timemark.skipPhase(t.id).then((d) => { mergeDto(d); refreshLedger(); }); },
       segment: async () => {
         mergeDto(await window.timemark.segment(t.id));
-        refreshRecords();
+        refreshLedger();
       },
+      /** 结束 = 如实结算已进行时长并归零（引擎内按类型分派），与重置（直接归零不记账）区分 */
       end: async () => {
-        if (t.type === 'STOPWATCH') {
-          mergeDto(await window.timemark.stop(t.id));
-        } else if (t.runState === 'running' || t.runState === 'paused') {
-          // 提前结束（运行/暂停均可）：把已进行时长如实打点保存，再复位，不丢数据
-          mergeDto(await window.timemark.segment(t.id));
-          mergeDto(await window.timemark.reset(t.id));
-        } else {
-          mergeDto(await window.timemark.reset(t.id));
-        }
-        refreshRecords();
+        mergeDto(await window.timemark.stop(t.id));
+        refreshLedger();
       },
       openClock: () => setFullscreenId(t.id)
     };
@@ -333,9 +227,9 @@ export default function App() {
 
   function secondaryAction(t: TimerDTO | null) {
     if (!t || t.runState !== 'running') return;
-    if (isPomodoro(t)) void pomoSkip(t);
+    if (isPomodoro(t)) window.timemark.skipPhase(t.id).then((d) => { mergeDto(d); refreshLedger(); });
     else if (t.type === 'PRECISE_COUNTDOWN' || t.type === 'STOPWATCH') {
-      window.timemark.segment(t.id).then(() => refreshRecords());
+      window.timemark.segment(t.id).then(() => refreshLedger());
     }
   }
 
@@ -360,7 +254,6 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, fullscreenTimer, editing, loginOpen, fullscreenId, view]);
 
   async function handleLogout() {
@@ -371,9 +264,9 @@ export default function App() {
   const typeDesc = (t: TimerDTO): string => {
     if (isPomodoro(t)) {
       const c = getPomodoro(t);
-      return `番茄钟 · 专注 ${Math.round(c.work_ms / 60000)} 分钟 × ${c.rounds} 轮`;
+      return `番茄钟 · 专注 ${Math.round(c.work_ms / 60000)} 分钟 · 每 ${c.rounds} 轮长休息`;
     }
-    if (t.type === 'PRECISE_COUNTDOWN') return `精确倒计时 · 总时长 ${formatRemaining((t.config as any).preset_ms ?? 0)}`;
+    if (t.type === 'PRECISE_COUNTDOWN') return `精确倒计时 · 总时长 ${formatRemaining(t.config.preset_ms ?? 0)}`;
     if (t.type === 'STOPWATCH') return '正计时 · 累计计时 · 支持分段';
     return `日期倒计时 · 目标 ${t.targetDate ?? ''}`;
   };
@@ -400,6 +293,7 @@ export default function App() {
         sync={sync}
         onSyncNow={() => window.timemark.syncNow()}
         onExport={() => window.timemark.exportData()}
+        onImport={() => window.timemark.importData().then((r) => { if (r.ok) refreshLedger(); })}
         onLogout={handleLogout}
         onLogin={() => setLoginOpen(true)}
         currentVersion={appVer}
@@ -435,14 +329,14 @@ export default function App() {
                 <button
                   className={`t-icon-btn ${selected.starred ? 'on-star' : ''}`}
                   title={selected.starred ? '取消星标' : '星标'}
-                  onClick={() => window.timemark.update(selected.id, { starred: !selected.starred }).then(mergeDto)}
+                  onClick={() => window.timemark.update(selected.id, { starred: !selected.starred }).then((r) => mergeDto(r.timer))}
                 >
                   <IconStar size={17} filled={selected.starred} />
                 </button>
                 <button
                   className={`t-icon-btn ${selected.pinned ? 'on-pin' : ''}`}
                   title={selected.pinned ? '取消置顶' : '置顶'}
-                  onClick={() => window.timemark.update(selected.id, { pinned: !selected.pinned })}
+                  onClick={() => window.timemark.update(selected.id, { pinned: !selected.pinned }).then((r) => mergeDto(r.timer))}
                 >
                   <IconPin size={17} filled={selected.pinned} />
                 </button>
@@ -466,7 +360,7 @@ export default function App() {
               <WinControls />
             </div>
 
-            <FocusStage key={selected.id} timer={selected} pomoPhase={pomoState[selected.id] ?? null} actions={buildActions(selected)} />
+            <FocusStage key={selected.id} timer={selected} actions={buildActions(selected)} />
 
             <div className="overview">
               <div className="ov-item"><span className="ov-val">{formatFocus(stats.focusMs)}</span><span className="ov-label">今日专注</span></div>
@@ -484,11 +378,10 @@ export default function App() {
       {fullscreenTimer && (
         <FullscreenClock
           timer={fullscreenTimer}
-          pomoPhase={pomoState[fullscreenTimer.id] ?? null}
-          onStart={() => (isPomodoro(fullscreenTimer) ? pomoStart(fullscreenTimer) : window.timemark.start(fullscreenTimer.id).then(mergeDto))}
-          onPause={() => window.timemark.pause(fullscreenTimer.id).then(mergeDto)}
-          onResume={() => window.timemark.resume(fullscreenTimer.id).then(mergeDto)}
-          onSkip={() => { if (isPomodoro(fullscreenTimer)) void pomoSkip(fullscreenTimer); }}
+          onStart={() => buildActions(fullscreenTimer).start()}
+          onPause={() => buildActions(fullscreenTimer).pause()}
+          onResume={() => buildActions(fullscreenTimer).resume()}
+          onSkip={() => buildActions(fullscreenTimer).skip()}
           onSegment={() => buildActions(fullscreenTimer).segment()}
           onClose={() => setFullscreenId(null)}
         />

@@ -1,0 +1,191 @@
+// 跨端契约单一来源（与 apps/android/.../core/Contract.kt 逐字段镜像）。
+// 默认值、夹紧边界、config_json 字段落位、isPomodoro 判定、色板只在这里定义一次；
+// 两端由 shared/contract/fixtures/contract.json 表驱动测试共同校验。
+
+export const MONO_GUARD_MS = 2000;
+
+export const DEFAULTS = {
+  work_ms: 25 * 60000,
+  break_ms: 5 * 60000,
+  long_break_ms: 15 * 60000,
+  rounds: 4
+};
+
+/** 夹紧边界：越界一律夹回，双端必须一致（fixture 测试逐条断言） */
+export const CLAMPS = {
+  work_ms: [60000, 180 * 60000] as const,
+  break_ms: [30000, 60 * 60000] as const,
+  long_break_ms: [30000, 240 * 60000] as const,
+  rounds: [1, 12] as const
+};
+
+export type PomodoroPhase = 'focus' | 'break' | 'long_break';
+export const PHASE_FOCUS: PomodoroPhase = 'focus';
+export const PHASE_BREAK: PomodoroPhase = 'break';
+export const PHASE_LONG_BREAK: PomodoroPhase = 'long_break';
+
+/** timer_record.record_type 全集。POMODORO_FOCUS/BREAK 让阶段成为事实而非时长猜测。 */
+export const RECORD = {
+  PRECISE: 'PRECISE',
+  SEGMENT: 'SEGMENT',
+  STOPWATCH: 'STOPWATCH',
+  POMODORO_FOCUS: 'POMODORO_FOCUS',
+  POMODORO_BREAK: 'POMODORO_BREAK'
+} as const;
+export type RecordType = (typeof RECORD)[keyof typeof RECORD];
+
+/** 计时器色板（v3 规范 §1.3 的 8 色；两端唯一来源，Android 由 ContractTest 断言同一组十六进制） */
+export const TIMER_PALETTE = [
+  '#4DC9F0', '#9381FF', '#21E0C4', '#FFB224',
+  '#FF6B6B', '#5A9EFF', '#F472B6', '#A3E635'
+];
+export const DEFAULT_TIMER_COLOR = TIMER_PALETTE[0];
+/** 标签色板：按名称 charCode 求和取模（双端同算法，见 fixture tag_colors 用例） */
+export const TAG_PALETTE = TIMER_PALETTE;
+
+export const MIN_PRESET_MS = 1000;
+export const MAX_PRESET_MS = 365 * 86400000;
+
+/** 提前结束/跳阶段时的最小结算时长：不足则视为误触，不写记录（双端同一阈值） */
+export const PARTIAL_SETTLE_MIN_MS = 5000;
+
+export const RUN_STATE = {
+  IDLE: 'idle',
+  RUNNING: 'running',
+  PAUSED: 'paused'
+} as const;
+
+export const TIMER_TYPES = ['DATE_COUNTDOWN', 'PRECISE_COUNTDOWN', 'STOPWATCH'] as const;
+
+/**
+ * 同步表白名单（与 backend RowStore.COLUMNS、Android 实体逐列一致）。
+ * syncClient 应用远程行与引擎导入备份都从这里取，Windows 端只此一份。
+ */
+export const SYNC_TABLE_COLUMNS: Record<string, readonly string[]> = {
+  timer_item: ['id', 'user_id', 'name', 'type', 'color', 'starred', 'pinned', 'remark',
+    'config_json', 'run_state', 'session_id', 'run_json', 'version', 'updated_at', 'deleted', 'origin_device_id'],
+  tag: ['id', 'user_id', 'name', 'color', 'version', 'updated_at', 'deleted', 'origin_device_id'],
+  timer_tag: ['id', 'user_id', 'timer_id', 'tag_id', 'version', 'updated_at', 'deleted', 'origin_device_id'],
+  milestone: ['id', 'user_id', 'timer_id', 'note', 'marked_at', 'version', 'updated_at', 'deleted', 'origin_device_id'],
+  timer_record: ['id', 'user_id', 'timer_id', 'session_id', 'started_at', 'ended_at',
+    'duration_sec', 'record_type', 'version', 'updated_at', 'deleted', 'origin_device_id']
+};
+
+function clamp(v: number | null | undefined, [lo, hi]: readonly [number, number], fallback: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+/** 归一后的番茄钟配置：全部字段有值且已夹紧，任何一端读到同一 config_json 都得到同一结果 */
+export interface NormalizedPomodoro {
+  work_ms: number;
+  break_ms: number;
+  long_break_ms: number;
+  rounds: number;
+}
+
+/**
+ * 读番茄钟配置。兼容三种历史落位：
+ *   1) 规范：config.pomodoro.{work_ms,break_ms,long_break_ms,rounds}
+ *   2) Android v0.4.7：长休息落在 config.long_break_ms（顶层）
+ *   3) Android v0.4.6：config.{focus_ms,short_break_ms,rounds_before_long}
+ * 顶层/旧字段仅在 pomodoro 内缺省时兜底，新写入一律走 buildPreciseConfig。
+ */
+/** 未归一的 config 片段：任何一端读到的原始 JSON 都先按这个形状取字段 */
+type RawPomodoro = { work_ms?: number; break_ms?: number; long_break_ms?: number; rounds?: number };
+type RawConfig = { pomodoro?: RawPomodoro | null; focus_ms?: number; short_break_ms?: number; long_break_ms?: number; rounds_before_long?: number };
+
+export function normalizePomodoro(config: unknown): NormalizedPomodoro {
+  const cfg = (config ?? {}) as RawConfig;
+  const p = cfg.pomodoro ?? {};
+  return {
+    work_ms: clamp(p.work_ms ?? cfg.focus_ms, CLAMPS.work_ms, DEFAULTS.work_ms),
+    break_ms: clamp(p.break_ms ?? cfg.short_break_ms, CLAMPS.break_ms, DEFAULTS.break_ms),
+    long_break_ms: clamp(p.long_break_ms ?? cfg.long_break_ms, CLAMPS.long_break_ms, DEFAULTS.long_break_ms),
+    rounds: clamp(p.rounds ?? cfg.rounds_before_long, CLAMPS.rounds, DEFAULTS.rounds)
+  };
+}
+
+/** 是否番茄钟：type=PRECISE_COUNTDOWN 且存在番茄钟配置（含旧格式 focus_ms）。rounds 缺失时补默认 4 而非判否。 */
+export function isPomodoroConfig(type: string, config: unknown): boolean {
+  if (type !== 'PRECISE_COUNTDOWN') return false;
+  const cfg = (config ?? {}) as RawConfig;
+  return !!cfg.pomodoro || Number(cfg.focus_ms) > 0;
+}
+
+/** 阶段时长 */
+export function phasePresetMs(p: NormalizedPomodoro, phase: PomodoroPhase | string | null | undefined): number {
+  if (phase === PHASE_LONG_BREAK) return p.long_break_ms;
+  if (phase === PHASE_BREAK) return p.break_ms;
+  return p.work_ms;
+}
+
+/** 长休息判定：每完成 rounds 轮专注进一次长休息 */
+export function isLongBreakDue(p: NormalizedPomodoro, completedFocusAfterThisRound: number): boolean {
+  return completedFocusAfterThisRound > 0 && completedFocusAfterThisRound % p.rounds === 0;
+}
+
+/** 普通精确倒计时 config */
+export function buildPreciseConfig(presetMs: number): Record<string, unknown> {
+  return { schema_version: 1, preset_ms: clamp(presetMs, [MIN_PRESET_MS, MAX_PRESET_MS], MIN_PRESET_MS) };
+}
+
+/**
+ * 番茄钟 config（canonical 落位）：long_break_ms 在 pomodoro 内（Windows/新 Android 读这里），
+ * 顶层再镜像一份（v0.4.7 Android 只读顶层）——两处同写让新旧客户端都拿到同一个值。
+ */
+export function buildPomodoroConfig(pomo?: Partial<NormalizedPomodoro>): Record<string, unknown> {
+  const n = normalizePomodoro({ pomodoro: pomo });
+  return {
+    schema_version: 1,
+    preset_ms: n.work_ms,
+    pomodoro: { work_ms: n.work_ms, break_ms: n.break_ms, long_break_ms: n.long_break_ms, rounds: n.rounds },
+    long_break_ms: n.long_break_ms
+  };
+}
+
+export function tagColorFor(name: string): string {
+  let sum = 0;
+  for (const ch of [...name]) sum += ch.charCodeAt(0);
+  return TAG_PALETTE[sum % TAG_PALETTE.length];
+}
+
+/** 一条记录对三项今日统计的贡献。统计口径只在契约里决定一次，双端求和后按天分组。 */
+export interface Contribution {
+  focusMs: number;
+  rounds: number;
+  marks: number;
+}
+
+const ZERO: Contribution = { focusMs: 0, rounds: 0, marks: 0 };
+
+export function contribute(
+  rec: { durationSec: number; recordType: string },
+  timerIsPomodoro: boolean,
+  p: NormalizedPomodoro
+): Contribution {
+  const ms = rec.durationSec * 1000;
+  if (ms <= 0) return ZERO;
+  switch (rec.recordType) {
+    case RECORD.POMODORO_FOCUS:
+      return { focusMs: ms, rounds: 1, marks: 0 };
+    case RECORD.POMODORO_BREAK:
+      return ZERO;
+    case RECORD.SEGMENT:
+      return { focusMs: 0, rounds: 0, marks: 1 };
+    case RECORD.PRECISE:
+    case RECORD.STOPWATCH:
+      // 番茄钟的历史 PRECISE：等于休息档则视为休息段
+      if (timerIsPomodoro && (ms === p.break_ms || ms === p.long_break_ms)) return ZERO;
+      return { focusMs: ms, rounds: 1, marks: 0 };
+    default:
+      return ZERO;
+  }
+}
+
+export function sumContribution(acc: Contribution, c: Contribution): Contribution {
+  return { focusMs: acc.focusMs + c.focusMs, rounds: acc.rounds + c.rounds, marks: acc.marks + c.marks };
+}
+
+export const EMPTY_CONTRIBUTION: Contribution = ZERO;

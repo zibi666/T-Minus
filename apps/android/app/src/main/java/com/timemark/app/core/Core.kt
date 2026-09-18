@@ -7,6 +7,9 @@ object Types {
     const val DATE = "DATE_COUNTDOWN"
     const val PRECISE = "PRECISE_COUNTDOWN"
     const val STOPWATCH = "STOPWATCH"
+
+    /** 番茄钟不再是独立 type：与 Windows 对齐，存 PRECISE_COUNTDOWN + config.pomodoro 嵌套。
+     *  此常量仅用于 UI 逻辑分支标识（isPomodoro 判定后替代 type 比较）。 */
     const val POMODORO = "POMODORO"
 
     const val IDLE = "idle"
@@ -16,11 +19,26 @@ object Types {
     const val RECORD_PRECISE = "PRECISE"
     const val RECORD_SEGMENT = "SEGMENT"
     const val RECORD_STOPWATCH = "STOPWATCH"
+    /** 番茄钟阶段记录：把阶段作为事实写进记录，替代旧版「按时长猜是不是休息」 */
+    const val RECORD_POMODORO_FOCUS = "POMODORO_FOCUS"
+    const val RECORD_POMODORO_BREAK = "POMODORO_BREAK"
 
     val TYPE_LABEL = mapOf(
         DATE to "日期倒计时", PRECISE to "精确倒计时",
         STOPWATCH to "正计时", POMODORO to "番茄钟"
     )
+
+    /** 记录类型 → 中文徽章（历史页用） */
+    val RECORD_LABEL = mapOf(
+        RECORD_PRECISE to "完成", RECORD_SEGMENT to "分段", RECORD_STOPWATCH to "正计时",
+        RECORD_POMODORO_FOCUS to "专注", RECORD_POMODORO_BREAK to "休息"
+    )
+
+    /** 逻辑类型：番茄钟（PRECISE + pomodoro 配置）返回 POMODORO，否则返回原 type */
+    fun logical(type: String, configJson: String?): String {
+        val cfg = Jsons.configJson(configJson)
+        return if (Contract.isPomodoro(type, cfg)) POMODORO else type
+    }
 }
 
 @Serializable
@@ -31,7 +49,18 @@ data class RunJson(
     val segment_started_at: Long? = null,
     val phase: String? = null,
     val phase_ends_at: Long? = null,
-    val completed_focus: Int = 0
+    val completed_focus: Int = 0,
+    /** 与 Windows 对齐：已完成分段时长列表（PRECISE=各轮实际用时；STOPWATCH=各 lap 用时） */
+    val segments_ms: List<Long>? = null
+)
+
+/** Windows 兼容的番茄钟嵌套配置（§4.4）。long_break_ms 与 Windows 同处 pomodoro 内。 */
+@Serializable
+data class PomodoroConfig(
+    val work_ms: Long? = null,
+    val break_ms: Long? = null,
+    val long_break_ms: Long? = null,
+    val rounds: Int? = null
 )
 
 @Serializable
@@ -41,11 +70,33 @@ data class ConfigJson(
     val timezone_id: String? = null,
     val include_today: Boolean = false,
     val preset_ms: Long? = null,
+    /** Windows 兼容嵌套：存在即视为番茄钟 */
+    val pomodoro: PomodoroConfig? = null,
+    /** 兼容落位：v0.4.7 的 Android 把长休息写在顶层；读取兜底，写入时同时镜像 */
+    val long_break_ms: Long? = null,
+    // ---- 旧格式（v0.4.6 遗留，仅读取兼容，写入不再使用）----
     val focus_ms: Long? = null,
     val short_break_ms: Long? = null,
-    val long_break_ms: Long? = null,
     val rounds_before_long: Int? = null
-)
+) {
+    /** 归一化视图：默认值与夹紧边界由 Contract 统一给出 */
+    val normalized: Contract.Pomodoro get() = Contract.normalizePomodoro(this)
+
+    /** 配置层面是否为番茄钟（不看 type；type 判定见 Contract.isPomodoro） */
+    fun isPomodoro(): Boolean = pomodoro != null || (focus_ms ?: 0L) > 0L
+
+    /** 专注时长 */
+    fun workMs(): Long = normalized.workMs
+
+    /** 短休息时长 */
+    fun shortBreakMs(): Long = normalized.breakMs
+
+    /** 长休息时长 */
+    fun longBreakMs(): Long = normalized.longBreakMs
+
+    /** 长休息间隔轮数 */
+    fun roundsBeforeLong(): Int = normalized.rounds
+}
 
 object Jsons {
     val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
@@ -65,10 +116,13 @@ data class LiveState(
 )
 
 object Engine {
-    /** §3 通用状态计算：given row 的 JSON 快照 + 当前墙钟，推导 UI 所需的全部派生量 */
+    /** §3 通用状态计算：given row 的 JSON 快照 + 当前墙钟，推导 UI 所需的全部派生量。
+     *  番茄钟通过 config.isPomodoro() 判定（type 统一为 PRECISE_COUNTDOWN，与 Windows 对齐）。 */
     fun live(type: String, runState: String, runJson: String?, configJson: String?, now: Long): LiveState {
         val run = Jsons.runJson(runJson)
         val cfg = Jsons.configJson(configJson)
+        // 番茄钟：PRECISE_COUNTDOWN + pomodoro 配置（与 Windows isPomodoro 一致）
+        if (Contract.isPomodoro(type, cfg)) return pomodoroLive(runState, run, cfg, now)
         return when (type) {
             Types.PRECISE -> {
                 val preset = cfg.preset_ms ?: 0L
@@ -91,25 +145,27 @@ object Engine {
                     else -> LiveState(runState, 0, acc)
                 }
             }
-            Types.POMODORO -> {
-                val focus = cfg.focus_ms ?: 25 * 60000
-                val phase = run.phase ?: "focus"
-                val phasePreset = if (phase == "focus") focus else (cfg.short_break_ms ?: 5 * 60000)
-                when (runState) {
-                    Types.RUNNING -> {
-                        val rem = (run.phase_ends_at ?: now) - now
-                        val round = if (phase == "focus") run.completed_focus + 1 else run.completed_focus
-                        LiveState(runState, maxOf(0, rem), phasePreset - maxOf(0, rem), phase, round, due = rem <= 0)
-                    }
-                    Types.PAUSED -> {
-                        val rem = run.remaining_at_pause ?: 0
-                        val round = if (phase == "focus") run.completed_focus + 1 else run.completed_focus
-                        LiveState(runState, rem, phasePreset - rem, phase, round)
-                    }
-                    else -> LiveState(runState, focus, 0, "focus", 1)
-                }
-            }
             else -> LiveState(runState, 0, 0)
+        }
+    }
+
+    private fun pomodoroLive(runState: String, run: RunJson, cfg: ConfigJson, now: Long): LiveState {
+        val p = cfg.normalized
+        val phase = run.phase ?: Contract.PHASE_FOCUS
+        val isFocus = phase == Contract.PHASE_FOCUS
+        val phasePreset = Contract.phasePresetMs(p, phase)
+        // 轮次：专注中显示正在进行的第 completed+1 轮，休息中显示刚完成的第 completed 轮
+        val round = if (isFocus) run.completed_focus + 1 else run.completed_focus
+        return when (runState) {
+            Types.RUNNING -> {
+                val rem = (run.phase_ends_at ?: now) - now
+                LiveState(runState, maxOf(0, rem), phasePreset - maxOf(0, rem), phase, round, due = rem <= 0)
+            }
+            Types.PAUSED -> {
+                val rem = run.remaining_at_pause ?: 0
+                LiveState(runState, rem, phasePreset - rem, phase, round)
+            }
+            else -> LiveState(runState, phasePreset, 0, phase, round)
         }
     }
 

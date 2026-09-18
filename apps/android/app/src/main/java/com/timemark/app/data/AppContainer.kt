@@ -26,7 +26,6 @@ private val KEY_UID = stringPreferencesKey("auth_uid")
 private val KEY_USERNAME = stringPreferencesKey("auth_username")
 private val KEY_DEVICE_ID = stringPreferencesKey("device_id")
 private val KEY_CURSOR = longPreferencesKey("pull_cursor")
-private val KEY_JOURNAL = stringPreferencesKey("journal_json")
 
 const val SERVER_URL = "http://118.195.133.25:18080/"
 
@@ -47,34 +46,12 @@ class AuthStore(private val ds: DataStore<Preferences>) {
     suspend fun clear() { ds.edit { it.remove(KEY_TOKEN); it.remove(KEY_UID); it.remove(KEY_USERNAME) } }
 }
 
-@kotlinx.serialization.Serializable
-data class DayStat(val workCount: Int = 0, val workMs: Long = 0, val breakMs: Long = 0)
-
-class JournalStore(private val ds: DataStore<Preferences>) {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    fun observe(): Flow<Map<String, DayStat>> = ds.data.map { p ->
-        val raw = p[KEY_JOURNAL] ?: return@map emptyMap()
-        try { json.decodeFromString<Map<String, DayStat>>(raw) } catch (e: Exception) { emptyMap() }
-    }
-
-    suspend fun add(day: String, workCount: Int, workMs: Long, breakMs: Long) {
-        ds.edit { p ->
-            val cur = p[KEY_JOURNAL]?.let { runCatching { json.decodeFromString<Map<String, DayStat>>(it) }.getOrNull() } ?: emptyMap()
-            val old = cur[day] ?: DayStat()
-            val next = cur + (day to DayStat(old.workCount + workCount, old.workMs + workMs, old.breakMs + breakMs))
-            p[KEY_JOURNAL] = json.encodeToString(next)
-        }
-    }
-}
-
 class AppContainer(context: Context) {
     val appContext = context.applicationContext
     val json = Jsons.json
     val db = AppDatabase.build(appContext)
     val ds = appContext.dataStore
     val auth = AuthStore(ds)
-    val journal = JournalStore(ds)
 
     val api: TimeMarkApi = Retrofit.Builder()
         .baseUrl(SERVER_URL)
@@ -86,6 +63,6 @@ class AppContainer(context: Context) {
     suspend fun pullCursor(): Long = ds.data.first()[KEY_CURSOR] ?: 0L
     suspend fun setPullCursor(v: Long) { ds.edit { it[KEY_CURSOR] = v } }
 
-    val repo = TimerRepository(db, auth, journal)
+    val repo = TimerRepository(db, auth)
     val sync by lazy { SyncManager(this) }
 }
