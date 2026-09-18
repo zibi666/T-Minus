@@ -14,6 +14,7 @@ import com.timemark.app.data.TimerTagEntity
 import com.timemark.app.data.MilestoneEntity
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import retrofit2.HttpException
 
 /** §5 同步客户端：push pending_ops（operation_id 幂等）→ pull 游标整页推进 → 冲突丢弃走 pull 收敛（§6） */
 class SyncManager(private val c: AppContainer) {
@@ -45,8 +46,12 @@ class SyncManager(private val c: AppContainer) {
         }
     }
 
+    /** 登出要连游标与待发队列一起清：change_seq 是全局自增，留着高水位会让下一个账号的历史变更永远拉不到；
+     *  队列里是上一个账号的写，换账号后再推只会把数据往新账号名下搬。 */
     suspend fun logout() {
         c.auth.clear()
+        c.setPullCursor(0L)
+        c.db.pendingOpDao().clearAll()
     }
 
     /** 登录后只认领并入队「无主行」（离线期创建的那些）。
@@ -86,7 +91,14 @@ class SyncManager(private val c: AppContainer) {
             pull()
             lastError = null
         } catch (e: Exception) {
-            lastError = e.message ?: e.toString()
+            // 401：JWT 7 天到期且没有刷新接口，不清凭据就会每 4s 撞一次永远失败的请求，
+            // 而界面照显示「已登录 · 数据将自动同步」。清掉后 loggedIn 转 false，LoginScreen 会显示这条 lastError。
+            if (e is HttpException && e.code() == 401) {
+                c.auth.clear()
+                lastError = "登录已过期，请重新登录"
+            } else {
+                lastError = e.message ?: e.toString()
+            }
         } finally {
             syncing = false
         }
@@ -129,23 +141,28 @@ class SyncManager(private val c: AppContainer) {
             if (resp.changes.isEmpty()) return
             var appliedMax = cursor
             for (ch in resp.changes) {
+                val rowId = (ch.payload?.get("id") as? JsonPrimitive)?.contentOrNull
+                if (ch.origin_device_id == deviceId) {
+                    appliedMax = maxOf(appliedMax, ch.change_seq) // 自身提交已在本地
+                    continue
+                }
+                // 本行还有未上传操作：不消费，游标也不越过它，等该 op 被服务端确认后下一轮重投
+                if (rowId != null && c.db.pendingOpDao().dirtyCount(ch.table_name, rowId) > 0) continue
                 appliedMax = maxOf(appliedMax, ch.change_seq)
-                if (ch.origin_device_id == deviceId) continue // 自身提交已在本地
-                if (applyChange(ch) && ch.table_name == "timer_item") {
-                    val rowId = (ch.payload?.get("id") as? JsonPrimitive)?.contentOrNull
-                    if (rowId != null) c.repo.onRemoteApplied(rowId) // 作废本地单调基准，按远端段重落基
+                if (applyChange(ch) && ch.table_name == "timer_item" && rowId != null) {
+                    c.repo.onRemoteApplied(rowId) // 作废本地单调基准，按远端段重落基
                 }
             }
-            c.setPullCursor(appliedMax) // 整页成功应用后才推进（§5.3）
+            c.setPullCursor(appliedMax) // 只推进到「连续已消费」前缀（§5.3）
+            if (appliedMax == cursor) return // 整页都被挡住：等下一次 sync，不空转重取同一页
             if (!resp.has_more) return
         }
     }
 
-    /** dirty 规则：本行存在未上传操作时跳过远程覆盖 */
+    /** 应用远程行（调用方已确认本行没有未上传操作）；返回是否落库 */
     private suspend fun applyChange(ch: ChangeEntry): Boolean {
         val row = ch.payload ?: return false
         val rowId = (row["id"] as? JsonPrimitive)?.contentOrNull ?: return false
-        if (c.db.pendingOpDao().dirtyCount(ch.table_name, rowId) > 0) return false
         when (ch.table_name) {
             "timer_item" -> c.db.timerDao().upsert(RowCodec.elementToTimerItem(kotlinx.serialization.json.JsonObject(row)))
             "timer_record" -> c.db.recordDao().upsert(RowCodec.elementToRecord(kotlinx.serialization.json.JsonObject(row)))

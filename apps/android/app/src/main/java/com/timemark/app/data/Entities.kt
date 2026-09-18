@@ -186,6 +186,9 @@ interface PendingOpDao {
     @Query("DELETE FROM pending_ops WHERE operation_id = :opId")
     suspend fun deleteById(opId: String)
 
+    @Query("DELETE FROM pending_ops")
+    suspend fun clearAll()
+
     @Query("SELECT COUNT(*) FROM pending_ops WHERE table_name = :table AND row_id = :rowId AND state = 'queued'")
     suspend fun dirtyCount(table: String, rowId: String): Int
 
