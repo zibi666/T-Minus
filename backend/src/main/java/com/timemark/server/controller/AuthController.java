@@ -1,6 +1,7 @@
 package com.timemark.server.controller;
 
 import com.timemark.server.auth.JwtService;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +23,9 @@ public class AuthController {
     private final JdbcTemplate jdbc;
     private final JwtService jwt;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+
+    /** 账号不存在时也要走一次等价的 BCrypt 计算，否则「不存在的用户名」会明显更快返回，成为撞库探针 */
+    private static final String DUMMY_HASH = new BCryptPasswordEncoder().encode(UUID.randomUUID().toString());
 
     public AuthController(JdbcTemplate jdbc, JwtService jwt) {
         this.jdbc = jdbc;
@@ -50,8 +54,13 @@ public class AuthController {
             return error(409, "exists", "用户名已存在");
         }
         String id = UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)",
-                id, username, encoder.encode(password), System.currentTimeMillis());
+        try {
+            jdbc.update("INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)",
+                    id, username, encoder.encode(password), System.currentTimeMillis());
+        } catch (DuplicateKeyException e) {
+            // 上面的 SELECT 只是快速路径，并发同名注册最终由 username UNIQUE 兜底——不能让它变成 500
+            return error(409, "exists", "用户名已存在");
+        }
         return ok(id, username);
     }
 
@@ -61,8 +70,9 @@ public class AuthController {
         String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
         List<Map<String, Object>> users = jdbc.queryForList(
                 "SELECT id, username, password_hash FROM users WHERE username = ?", username);
-        if (users.isEmpty()
-                || !encoder.matches(password, (String) users.get(0).get("password_hash"))) {
+        boolean matched = encoder.matches(password,
+                users.isEmpty() ? DUMMY_HASH : (String) users.get(0).get("password_hash"));
+        if (!matched || users.isEmpty()) {
             return error(401, "bad_credentials", "用户名或密码错误");
         }
         return ok((String) users.get(0).get("id"), (String) users.get(0).get("username"));
