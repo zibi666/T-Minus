@@ -1,5 +1,5 @@
 // Electron 主进程：窗口 / 托盘 / IPC / 通知 / 计时循环
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, Notification, dialog, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, Notification, dialog, nativeTheme, shell, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { LocalDB, uuid, Row } from './db';
@@ -322,6 +322,11 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   setInterval(broadcastTick, 500);
+  // 睡眠唤醒：单调钟在 S3 期间不走表，不重排基准会把整段睡眠误判成「用户改时间」并给计时续命
+  powerMonitor.on('resume', () => {
+    engine.resyncAfterSleep();
+    broadcastTick();
+  });
   // 同步循环：登录状态下每 4s push/pull 一轮；syncNow 内部有并发保护
   setInterval(() => {
     if (sync.authState().loggedIn) sync.syncNow();

@@ -192,6 +192,40 @@ test('多设备并行结算同一阶段：确定性 id 把重复结算折叠成�
   assert.strictEqual(today.focusMs, 60000, '重复结算不得多计专注时长');
 });
 
+// 睡眠语义：进程单调钟（hrtime→QPC）在 S3 期间不走表，醒来后墙钟前跳而单调钟没动。
+// 下面两个用例分别钉住「不重排基准会把睡眠误判成改时钟并给计时续命」和「重排后照常补结算」。
+test('睡眠跨过整阶段：不重排基准时守卫会吞掉这一轮（回归基线）', () => {
+  const t = createPomo();
+  engine.start(t.id);
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 90000; // 睡了 90s，deadline 已在 30s 前过去
+    engine.tick();
+    assert.strictEqual(records(t.id).length, 0, '未重排基准时这一轮确实没结算');
+    const d = engine.get(t.id);
+    assert.ok(d && (d.remainingMs ?? 0) > 55000,
+      `未重排时 60s 的专注在 90s 后仍显示剩 ${d?.remainingMs}ms——守卫把它续回了未来`);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('睡眠跨过整阶段：唤醒重排基准后补结算，与 Android/鸿蒙 对齐', () => {
+  const t = createPomo();
+  engine.start(t.id);
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 90000;
+    engine.resyncAfterSleep(); // 内含一次 tick
+  } finally {
+    Date.now = realNow;
+  }
+  const recs = records(t.id);
+  assert.strictEqual(recs.length, 1, '睡着期间到点的阶段必须在唤醒时补上');
+  assert.strictEqual(recs[0].record_type, 'POMODORO_FOCUS');
+  assert.strictEqual(JSON.parse(row(t.id).run_json).phase, 'break');
+});
+
 test('删除计时会给关联标签打墓碑，避免活行永久残留', () => {
   const t = createPrecise(60000);
   engine.setTimerTags(t.id, ['考研', '408']);

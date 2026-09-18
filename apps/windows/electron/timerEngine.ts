@@ -141,7 +141,8 @@ export class TimerEngine {
     if (row.type === 'PRECISE_COUNTDOWN') {
       const deadline = this.isPomo(row) ? (run.phase_ends_at ?? run.target_at) : run.target_at;
       if (deadline) {
-        rt.segStartRemainingMs = Math.max(0, deadline - nowWall);
+        // 不夹 0：负数即「已过期」，tick 的到点判定要靠这个符号；展示与结算时长处各自 clamp
+        rt.segStartRemainingMs = deadline - nowWall;
         rt.segStartMonoNs = this.monoNs();
       }
     } else if (row.type === 'STOPWATCH') {
@@ -149,6 +150,20 @@ export class TimerEngine {
       rt.segStartElapsedMs = acc + (run.segment_started_at ? Math.max(0, nowWall - run.segment_started_at) : 0);
       rt.segStartMonoNs = this.monoNs();
     }
+  }
+
+  /**
+   * 系统从睡眠/休眠恢复时调用。
+   * 进程单调钟（hrtime → QPC）在 S3 期间不走表，醒来后「单调剩余」仍停在睡前的值，而墙钟已经跨过 deadline：
+   * §3.6 守卫会把这段真实的睡眠误判成「用户改了系统时间」，把 deadline 往后续，于是整阶段永不结算。
+   * Android 用的是 elapsedRealtime（含深睡），同场景会正常结算——这里以墙钟为准重排基准，与另一端对齐。
+   */
+  resyncAfterSleep(): void {
+    for (const rt of this.timers.values()) {
+      if (rt.row.deleted || rt.row.run_state !== RUN_STATE.RUNNING) continue;
+      this.reseatBaseline(rt);
+    }
+    this.tick();
   }
 
   /** 启动加载：running 状态以持久化字段恢复；跨重启无单调基准，按 §3.1 已知边界处理 */
