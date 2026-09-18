@@ -57,6 +57,16 @@ jobs:
       - name: Debug 构建
         run: ./gradlew :app:assembleDebug
         working-directory: apps/android
+      - name: 产物里的版本号必须等于仓库根 VERSION
+        run: |
+          node -e "
+          const fs=require('fs');
+          const want=fs.readFileSync('VERSION','utf-8').trim();
+          const meta=JSON.parse(fs.readFileSync('apps/android/app/build/outputs/apk/debug/output-metadata.json','utf-8'));
+          const got=meta.elements[0].versionName;
+          if(got!==want){console.error('APK versionName='+got+' 期望 '+want);process.exit(1)}
+          console.log('APK 版本号核对通过：v'+got);
+          "
 
   backend:
     name: 同步服务端（编译）

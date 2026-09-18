@@ -9,6 +9,8 @@ import com.timemark.app.core.RunJson
 import com.timemark.app.core.Types
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -36,6 +38,10 @@ class TimerRepository(
         db.timerDao().observeStatFlags(),
         db.recordDao().observeStatRows()
     ) { timers, rows -> aggregateDaily(timers, rows) }
+
+    /** 结算串行锁：Application 循环、TimerService 每秒循环、闹钟/开机广播三处会同时调 settleDue，
+     *  不串行会把同一个到期阶段推进两次并写重复记录。 */
+    private val settleMutex = Mutex()
 
     /** §3.6 单调时钟守卫：内存基准表（不持久化，进程重启后懒重建，与 Windows segStartMonoNs 一致）。
      *  key = timerId。记录每个 running 计时器进入当前段时的单调/墙钟基准与段起点剩余/累计。 */
@@ -339,7 +345,7 @@ class TimerRepository(
     /** 结算结果：供调用方（闹钟/前台循环）发通知，UI 之外不再静默 */
     data class Settled(val timer: TimerItemEntity, val kind: String, val phase: String? = null)
 
-    suspend fun settleDue(now: Long = System.currentTimeMillis()): List<Settled> {
+    suspend fun settleDue(now: Long = System.currentTimeMillis()): List<Settled> = settleMutex.withLock {
         val settled = mutableListOf<Settled>()
         for (raw in db.timerDao().runningAll()) {
             // §3.6 单调守卫：墙钟跳变 > 阈值时用 elapsedRealtime 修正 run_json，返回修正后实体
@@ -353,7 +359,7 @@ class TimerRepository(
                 if (target <= now) settled += finishPrecise(t, target)
             }
         }
-        return settled
+        settled
     }
 
     /** §3.6 单调时钟守卫：检测墙钟与 elapsedRealtime 偏差，超阈值则修正 run_json 的目标时刻。

@@ -9,10 +9,10 @@ const ROOT = path.resolve(__dirname, '..', '..', '..');
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (['node_modules', 'dist', 'release', 'release3', '.git', 'build', '.gradle', 'target'].includes(e.name)) continue;
+    if (['node_modules', 'dist', 'release', 'release3', '.git', 'build', '.gradle', 'target', 'oh_modules', '.hvigor'].includes(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
-    else if (/\.(ts|tsx|kt|kts|cjs|mjs|java)$/.test(e.name)) out.push(p);
+    else if (/\.(ts|tsx|kt|kts|cjs|mjs|java|ets)$/.test(e.name)) out.push(p);
   }
   return out;
 }
@@ -21,6 +21,8 @@ const sources = [
   ...walk(path.join(ROOT, 'apps/windows/electron')),
   ...walk(path.join(ROOT, 'apps/windows/src')),
   ...walk(path.join(ROOT, 'apps/android/app/src')),
+  // 鸿蒙端尚未入库时不参与扫描；提交后自动纳入守卫
+  ...(fs.existsSync(path.join(ROOT, 'apps/harmony/entry/src')) ? walk(path.join(ROOT, 'apps/harmony/entry/src')) : []),
   ...walk(path.join(ROOT, 'backend/src'))
 ];
 
@@ -39,7 +41,9 @@ test('色值只允许出现在契约与 fixture 里', () => {
   const allowed = [
     path.join('src', 'shared', 'contract.ts'),
     path.join('core', 'Contract.kt'),
-    path.join('ui', 'Theme.kt') // Compose 主题自身的 UI 色（bg/card/text/stroke），不含计时器色板
+    path.join('core', 'Contract.ets'),
+    path.join('ui', 'Theme.kt'), // Compose 主题自身的 UI 色（bg/card/text/stroke），不含计时器色板
+    path.join('common', 'Theme.ets') // 同上：ArkUI 主题的 UI 色
   ];
   for (const f of sources) {
     if (allowed.some((a) => f.endsWith(a))) continue;
@@ -52,7 +56,7 @@ test('色值只允许出现在契约与 fixture 里', () => {
 test('单调守卫阈值不再各处各写一份', () => {
   const hits = sources.filter((f) => /MONO_GUARD_MS\s*[:=]\s*2000|private const val MONO_GUARD_MS/.test(read(f)));
   for (const f of hits) {
-    assert.ok(f.endsWith('contract.ts') || f.endsWith('Contract.kt'), `${f} 自定义了守卫阈值，应引用契约`);
+    assert.ok(f.endsWith('contract.ts') || f.endsWith('Contract.kt') || f.endsWith('Contract.ets'), `${f} 自定义了守卫阈值，应引用契约`);
   }
 });
 
@@ -78,7 +82,7 @@ test('构建产物与本机 SDK 不再被 git 跟踪', () => {
   assert.strictEqual(offenders.length, 0, `仍有 ${offenders.length} 个产物/工具文件被跟踪，例如 ${offenders.slice(0, 3).join(', ')}`);
 });
 
-test('三处版本号同源', () => {
+test('四处版本号同源', () => {
   const version = fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf-8').trim();
   const pkg = JSON.parse(read(path.join(ROOT, 'apps/windows/package.json')));
   const latest = JSON.parse(read(path.join(ROOT, 'apps/windows/latest.json')));
@@ -86,6 +90,11 @@ test('三处版本号同源', () => {
   assert.strictEqual(latest.version, version, 'apps/windows/latest.json 与 VERSION 不一致');
   const gradle = read(path.join(ROOT, 'apps/android/app/build.gradle.kts'));
   assert.ok(/rootProject\.extra\["appVersion"\]/.test(gradle), 'Android 未从 VERSION 读取 versionName');
+  const app = read(path.join(ROOT, 'apps/harmony/AppScope/app.json5'));
+  assert.ok(new RegExp(`"versionName":\\s*"${version}"`).test(app), 'apps/harmony AppScope/app.json5 的 versionName 与 VERSION 不一致');
+  const [ma, mi, pa] = version.split('.').map((n) => parseInt(n, 10));
+  assert.ok(new RegExp(`"versionCode":\\s*${ma * 1000000 + mi * 1000 + pa}`).test(app),
+    'apps/harmony AppScope/app.json5 的 versionCode 未由 VERSION 导出');
 });
 
 test('旧 node 版同步服务端已从仓库移除，Java 后端是唯一实现', () => {
