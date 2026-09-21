@@ -45,8 +45,11 @@ public class AuthController {
     public Map<String, Object> register(@RequestBody Map<String, Object> body) {
         String username = body.get("username") == null ? "" : String.valueOf(body.get("username")).trim();
         String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
-        if (username.isEmpty() || password.length() < 6) {
-            return error(400, "invalid_input", "用户名不能为空，密码至少 6 位");
+        // BCryptPasswordEncoder(6.3+) 对超 72 字节的口令直接抛 IllegalArgumentException → 500；
+        // username 也须与 users.username VARCHAR(64) 对齐，否则落到数据库报错变 500
+        if (username.isEmpty() || password.length() < 6 || username.length() > 64
+                || password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72) {
+            return error(400, "invalid_input", "用户名不能为空且不超过 64 字符，密码至少 6 位、不超过 72 字节");
         }
         List<Map<String, Object>> exist = jdbc.queryForList(
                 "SELECT id FROM users WHERE username = ?", username);
@@ -68,6 +71,10 @@ public class AuthController {
     public Map<String, Object> login(@RequestBody Map<String, Object> body) {
         String username = body.get("username") == null ? "" : String.valueOf(body.get("username"));
         String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
+        // 超长口令不可能匹配库里任何 BCrypt 哈希（注册时已限 72 字节），先拦住免得 matches 抛异常变 500
+        if (password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72) {
+            return error(401, "bad_credentials", "用户名或密码错误");
+        }
         List<Map<String, Object>> users = jdbc.queryForList(
                 "SELECT id, username, password_hash FROM users WHERE username = ?", username);
         boolean matched = encoder.matches(password,

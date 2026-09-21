@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS timer_record (
 );
 
 -- §5.2 变更日志：change_seq 单调递增，pull 按它分页
+-- pull 恒按 (user_id, change_seq) 过滤，复合索引缺失时游标之后所有用户的行都会被扫一遍
 CREATE TABLE IF NOT EXISTS change_log (
   change_seq       BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id          VARCHAR(64),
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS change_log (
   op_type          VARCHAR(16),
   payload          TEXT,
   origin_device_id VARCHAR(64),
-  committed_at     BIGINT
+  committed_at     BIGINT,
+  INDEX idx_change_user (user_id, change_seq)
 );
 
 -- §5.4 push 幂等表：已见过的 operation_id 直接返回原结果

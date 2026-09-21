@@ -4,7 +4,8 @@ CREATE DATABASE IF NOT EXISTS timemark DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_g
 USE timemark;
 
 -- 表结构无需手动建：后端首次启动会自动执行 schema.sql（全部 CREATE TABLE IF NOT EXISTS，幂等）
--- 以下索引建议手动建一次（量级小，不建也不影响正确性）：
+-- 存量库必须手动补齐（schema.sql 的内联索引只对首次建表生效，对已存在的表无效）；
+-- 新库不建只影响 pull 性能，不影响正确性：
 CREATE INDEX idx_timer_user ON timemark.timer_item (user_id, deleted);
 CREATE INDEX idx_record_timer ON timemark.timer_record (timer_id);
 CREATE INDEX idx_change_user ON timemark.change_log (user_id, change_seq);

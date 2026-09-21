@@ -3,8 +3,10 @@ package com.timemark.server.controller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -20,6 +22,23 @@ public class GlobalExceptionHandler {
         m.put("error", e.code);
         m.put("message", e.getMessage());
         return ResponseEntity.status(e.status).body(m);
+    }
+
+    /** 请求体不是合法 JSON / 类型对不上：客户端可修复的错误，按 400 返回而不是刷 500 全栈日志 */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("error", "bad_request");
+        m.put("message", "请求体格式错误");
+        return ResponseEntity.status(400).body(m);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("error", "bad_request");
+        m.put("message", "参数格式错误");
+        return ResponseEntity.status(400).body(m);
     }
 
     @ExceptionHandler(Exception.class)

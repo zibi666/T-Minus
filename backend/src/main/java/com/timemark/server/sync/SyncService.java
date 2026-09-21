@@ -1,8 +1,6 @@
 package com.timemark.server.sync;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -17,7 +15,6 @@ import java.util.Map;
 @Service
 public class SyncService {
 
-    private static final Logger log = LoggerFactory.getLogger(SyncService.class);
     private static final int MAX_OPERATION_ID_LEN = 64;
 
     private final JdbcTemplate jdbc;
@@ -34,30 +31,24 @@ public class SyncService {
     }
 
     /**
-     * 逐条独立事务：一条脏数据不再连带回滚整批已接受的写入，也不会把 §5.4 承诺的逐条结果变成一个 500。
+     * 逐条独立事务：一条脏数据不再连带回滚整批已接受的写入。
      * 每笔事务先锁用户行，使 change_seq 的分配顺序等于提交顺序 ——
      * 否则 A 取到 101 却晚提交、B 取到 102 先提交，游标推过 102 之后 101 永久不可见。
+     * 未预期异常（DB 抖动、死锁等）不能在这里吞成 200 + rejected：客户端会把带 operation_id 的
+     * 结果当终态消费掉 pending op，瞬时故障就变成静默丢数据。让它抛出去走 500 ——
+     * 客户端非 2xx 保留整批队列下轮重投，已提交条目靠 ops 幂等表返回 duplicate，安全收敛。
      */
     public List<Map<String, Object>> push(List<Map<String, Object>> operations, String userId) {
         List<Map<String, Object>> results = new ArrayList<>();
         if (operations == null) operations = List.of();
         for (Map<String, Object> op : operations) {
-            Map<String, Object> r;
-            try {
-                r = tx.execute(status -> {
-                    try {
-                        return processOne(op, userId);
-                    } catch (Exception e) {
-                        throw new IllegalStateException(e);
-                    }
-                });
-            } catch (Exception e) {
-                log.error("push 单条失败 table={} row_id={}", op.get("table_name"), rowIdOf(op), e);
-                r = new LinkedHashMap<>();
-                r.put("operation_id", str(op.get("operation_id")));
-                r.put("status", "rejected");
-                r.put("reason", "server_error");
-            }
+            Map<String, Object> r = tx.execute(status -> {
+                try {
+                    return processOne(op, userId);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
             results.add(r);
         }
         return results;
@@ -139,6 +130,23 @@ public class SyncService {
                 // 墓碑落地即归零运行态：否则客户端按 run_state 扫描的结算循环会永久推进已删除的计时器
                 if ("timer_item".equals(table)) row.put("run_state", "idle");
             }
+            if ("update".equals(opType) && !Boolean.TRUE.equals(row.get("__run"))) {
+                // §6：非运行类更新只许改元数据，但客户端推的是整行快照。夹带的运行态会把他端
+                // 正在进行的计时按陈旧值回滚 → 运行态三列以服务端现值为准；
+                // 版本只进不退，否则陈旧快照把版本拉回后，运行中设备按旧 base_version 推的
+                // __run 会被 stale_version 卡死到对方再改这行为止
+                Map<String, Object> cur = rowStore.getRow(table, String.valueOf(row.get("id")), userId);
+                if (cur != null) {
+                    if ("timer_item".equals(table)) {
+                        row.put("run_state", cur.get("run_state"));
+                        row.put("session_id", cur.get("session_id"));
+                        row.put("run_json", cur.get("run_json"));
+                    }
+                    Long curV = numOrNull(cur.get("version"));
+                    Long rowV = numOrNull(row.get("version"));
+                    if (curV != null && (rowV == null || rowV < curV)) row.put("version", curV);
+                }
+            }
             if (rowStore.upsert(table, row, userId)) {
                 String payload = rowStore.toPayload(table, row, userId);
                 jdbc.update("INSERT INTO change_log (user_id, table_name, row_id, op_type, payload, origin_device_id, committed_at) VALUES (?,?,?,?,?,?,?)",
@@ -163,12 +171,6 @@ public class SyncService {
         result.put("status", status);
         result.put("reason", reason == null ? "" : reason);
         return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static String rowIdOf(Map<String, Object> op) {
-        Object row = op.get("row");
-        return row instanceof Map ? String.valueOf(((Map<String, Object>) row).get("id")) : null;
     }
 
     private static String str(Object o) {

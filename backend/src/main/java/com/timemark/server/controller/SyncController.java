@@ -75,14 +75,27 @@ public class SyncController {
     public Map<String, Object> push(HttpServletRequest request,
                                     @RequestBody Map<String, Object> body) throws Exception {
         String userId = (String) request.getAttribute("uid");
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> operations =
-                body.get("operations") == null ? List.of() : (List<Map<String, Object>>) body.get("operations");
+        // 形状不对的 body 走 400 而不是 500：operations 非数组/元素非对象会绕过逐条校验直接炸出 ClassCastException
+        Object raw = body.get("operations");
+        List<Map<String, Object>> operations = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map)) throw new ApiException(400, "bad_request", "operations 元素必须是对象");
+                operations.add(castOp(o));
+            }
+        } else if (raw != null) {
+            throw new ApiException(400, "bad_request", "operations 必须是数组");
+        }
         if (operations.size() > MAX_PUSH_OPS) {
             throw new ApiException(400, "too_many_ops", "单次 push 最多 " + MAX_PUSH_OPS + " 条");
         }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("results", syncService.push(operations, userId));
         return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castOp(Object o) {
+        return (Map<String, Object>) o;
     }
 }
