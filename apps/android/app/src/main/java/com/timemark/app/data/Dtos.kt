@@ -26,7 +26,7 @@ data class PushOp(
 data class PushReq(val operations: List<PushOp>)
 
 @Serializable
-data class PushResult(val operation_id: String? = null, val status: String? = null)
+data class PushResult(val operation_id: String? = null, val status: String? = null, val duplicate: Boolean = false)
 
 @Serializable
 data class PushResp(val results: List<PushResult> = emptyList())
