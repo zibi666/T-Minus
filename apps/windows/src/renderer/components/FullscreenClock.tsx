@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TimerDTO } from '../../shared/types';
-import { formatHMS } from '../../shared/format';
-import { isPomodoro, getPomodoro, mmss, glowColor, formatSeconds, cssVars } from '../helpers';
-import { IconClose, IconPause, IconPlay, IconSegment } from './icons';
+import { formatHMS, formatElapsed } from '../../shared/format';
+import { isPomodoro, getPomodoro, mmss, glowColor, cssVars } from '../helpers';
+import { IconClose, IconPause, IconPlay, IconSegment, IconStar, IconPin, IconPencil } from './icons';
 
 const TYPE_LABEL: Record<string, string> = {
   DATE_COUNTDOWN: '日期倒计时',
@@ -18,9 +18,13 @@ interface Props {
   onSkip: () => void;
   onSegment: () => void;
   onClose: () => void;
+  /** 台钟内快捷操作：不必退出全屏就能改归属/配置 */
+  onStar: () => void;
+  onPin: () => void;
+  onEdit: () => void;
 }
 
-export default function FullscreenClock({ timer: t, onPause, onResume, onStart, onSkip, onSegment, onClose }: Props) {
+export default function FullscreenClock({ timer: t, onPause, onResume, onStart, onSkip, onSegment, onClose, onStar, onPin, onEdit }: Props) {
   const [closing, setClosing] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -77,7 +81,8 @@ export default function FullscreenClock({ timer: t, onPause, onResume, onStart, 
         : <>总时长 {formatHMS(preset)} · 待开始</>;
     }
   } else {
-    giant = <>{formatSeconds(t.elapsedMs ?? 0, running)}<span className="unit">秒</span></>;
+    // 正计时与移动端同口径（hh:mm:ss，运行中带百分秒）；不再退回「5400 秒」式裸秒数
+    giant = <>{formatElapsed(t.elapsedMs ?? 0, running)}</>;
     sub = running ? '计时中' : paused ? '已暂停' : '待开始';
   }
 
@@ -94,6 +99,20 @@ export default function FullscreenClock({ timer: t, onPause, onResume, onStart, 
           {t.name}
           <span className="type-badge">{isPomo ? '番茄钟' : TYPE_LABEL[t.type] ?? ''}</span>
           {paused && <span className="type-badge" style={{ color: 'var(--warn)', borderColor: 'rgba(255,178,36,.3)', background: 'rgba(255,178,36,.08)' }}>已暂停</span>}
+        </div>
+
+        <div className="clock-tools">
+          <button
+            className={`clock-tool ${t.starred ? 'on-star' : ''}`}
+            title={t.starred ? '取消星标' : '星标'}
+            onClick={onStar}
+          ><IconStar size={15} filled={t.starred} /></button>
+          <button
+            className={`clock-tool ${t.pinned ? 'on-pin' : ''}`}
+            title={t.pinned ? '取消置顶' : '置顶'}
+            onClick={onPin}
+          ><IconPin size={15} filled={t.pinned} /></button>
+          <button className="clock-tool" title="编辑" onClick={onEdit}><IconPencil size={14} /></button>
         </div>
 
         <div className="clock-giant">{giant}</div>

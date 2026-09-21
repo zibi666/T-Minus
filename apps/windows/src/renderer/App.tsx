@@ -27,6 +27,15 @@ export default function App() {
   const [editing, setEditing] = useState<EditTarget | null>(null);
   const [fullscreenId, setFullscreenId] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  /** 轻量提示：导入/退出登录这类「静默改变了数据」的动作必须给出结果反馈 */
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 6000);
+  }, []);
+  useEffect(() => () => { if (toastTimer.current) window.clearTimeout(toastTimer.current); }, []);
 
   // ---- 更新检查 ----
   const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latest: string; current: string } | null>(null);
@@ -263,7 +272,10 @@ export default function App() {
   }, [selected, fullscreenTimer, editing, loginOpen, fullscreenId, view]);
 
   async function handleLogout() {
-    await window.timemark.logout();
+    const r = await window.timemark.logout();
+    if (r.discarded > 0) {
+      showToast(`已退出登录，丢弃 ${r.discarded} 条上一个账号未上传的本地修改`);
+    }
     setAuth(await window.timemark.authState());
   }
 
@@ -299,7 +311,7 @@ export default function App() {
         sync={sync}
         onSyncNow={() => window.timemark.syncNow()}
         onExport={() => window.timemark.exportData()}
-        onImport={() => window.timemark.importData().then((r) => { if (r.ok) refreshLedger(); })}
+        onImport={() => window.timemark.importData().then((r) => { if (r.ok) { refreshLedger(); showToast(`已导入 ${r.counts.timer_item ?? 0} 个计时项`); } else if (r.message) showToast(r.message); })}
         onLogout={handleLogout}
         onLogin={() => setLoginOpen(true)}
         currentVersion={appVer}
@@ -389,6 +401,9 @@ export default function App() {
           onResume={() => buildActions(fullscreenTimer).resume()}
           onSkip={() => buildActions(fullscreenTimer).skip()}
           onSegment={() => buildActions(fullscreenTimer).segment()}
+          onStar={() => window.timemark.update(fullscreenTimer.id, { starred: !fullscreenTimer.starred }).then((r) => mergeDto(r.timer))}
+          onPin={() => window.timemark.update(fullscreenTimer.id, { pinned: !fullscreenTimer.pinned }).then((r) => mergeDto(r.timer))}
+          onEdit={() => setEditing({ mode: 'edit', timer: fullscreenTimer })}
           onClose={() => setFullscreenId(null)}
         />
       )}
@@ -402,6 +417,7 @@ export default function App() {
           }}
         />
       )}
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }

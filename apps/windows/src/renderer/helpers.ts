@@ -38,14 +38,6 @@ export function startOfToday(): number {
   return d.getTime();
 }
 
-/** 正计时秒级展示：纯秒数（可含百分秒），如 72.45 */
-export function formatSeconds(ms: number, withCs = false): string {
-  const total = Math.max(0, Math.floor(ms));
-  const s = Math.floor(total / 1000);
-  const cs = Math.floor((total % 1000) / 10);
-  return withCs ? `${s}.${String(cs).padStart(2, '0')}` : String(s);
-}
-
 /* ---------- 分段自定义命名（localStorage，键为 timer_record.id） ---------- */
 
 const SEG_NAMES_KEY = 'tm-seg-names';

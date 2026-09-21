@@ -219,24 +219,26 @@ body {
    hover / active 的颜色变化不走 background 过渡（非合成器属性，软件渲染下生硬），
    而是把背景画在伪元素上，用 opacity 0→1 过渡 —— 动画属性仅 opacity，视觉为颜色渐变。 */
 .t-row, .filter-chip, .btn-ghost, .btn-accent, .t-icon-btn, .win-btn,
-.sync-menu button, .preset, .seg-item, .modal-actions button, .modal-close, .clock-close {
+.sync-menu button, .preset, .seg-item, .modal-actions button, .modal-close, .clock-close,
+.clock-tool {
   position: relative;
 }
 .t-row::after, .filter-chip::after, .btn-ghost::after, .btn-accent::after, .t-icon-btn::after,
 .win-btn::after, .sync-menu button::after, .preset::after, .seg-item::after,
-.modal-actions button::after, .modal-close::after, .clock-close::after {
+.modal-actions button::after, .modal-close::after, .clock-close::after, .clock-tool::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: rgba(255, 255, 255, 0.07);
   opacity: 0; transition: opacity 0.16s ease; pointer-events: none; z-index: 0;
 }
 .t-row:hover::after, .filter-chip:hover::after, .btn-ghost:hover::after, .btn-accent:hover::after,
 .t-icon-btn:hover::after, .win-btn:hover::after, .sync-menu button:hover::after, .preset:hover::after,
-.seg-item:hover::after, .modal-actions button:hover::after, .modal-close:hover::after, .clock-close:hover::after {
+.seg-item:hover::after, .modal-actions button:hover::after, .modal-close:hover::after, .clock-close:hover::after,
+.clock-tool:hover::after {
   opacity: 1;
 }
 .t-row > *, .filter-chip > *, .btn-ghost > *, .btn-accent > *, .t-icon-btn > *, .win-btn > *,
 .sync-menu button > *, .preset > *, .seg-item > *, .modal-actions button > *,
-.modal-close > *, .clock-close > * {
+.modal-close > *, .clock-close > *, .clock-tool > * {
   position: relative; z-index: 1;
 }
 
@@ -607,6 +609,19 @@ body {
   transition: opacity 0.15s, transform 0.15s;
 }
 .clock-close:hover { color: var(--text-hi); }
+/* 台钟内快捷操作：星标 / 置顶 / 编辑（进台钟后不必退出就能改归属与配置） */
+.clock-tools { display: flex; gap: 8px; }
+.clock-tool {
+  width: 30px; height: 30px; padding: 0; border: none; border-radius: 9px; cursor: pointer;
+  background: var(--glass-strong); color: var(--text-low);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.15s;
+}
+.clock-tool:hover { color: var(--text-hi); }
+.clock-tool.on-star { color: var(--warn); }
+.clock-tool.on-pin { color: var(--tc-cyan); }
+/* 里程碑内联输入（替代 window.prompt） */
+.ms-add { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; max-width: 340px; }
 /* 里程碑时间轴（日期倒计时） */
 .timeline { width: 640px; max-width: 78vw; display: flex; flex-direction: column; gap: 8px; }
 .timeline-track { position: relative; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
@@ -1017,6 +1032,18 @@ body {
 }
 .gear-btn:hover { background: rgba(255, 255, 255, 0.09); color: var(--text-hi); }
 .gear-btn.has-update { color: var(--warn); }
+
+/* ================= 轻量提示（导入 / 退出登录结果反馈） ================= */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  z-index: 90; max-width: min(560px, calc(100vw - 48px));
+  padding: 10px 16px; border-radius: 12px;
+  background: var(--card-grad-a); border: 1px solid var(--stroke-soft);
+  box-shadow: var(--shadow-card), var(--inner-highlight);
+  color: var(--text-mid); font-size: 13px; line-height: 1.5; text-align: center;
+  animation: toast-in var(--dur-pop) both;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } }
 
 /* ================= 动效偏好降级 ================= */
 @media (prefers-reduced-motion: reduce) {

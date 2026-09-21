@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { TimerDTO, AuthInfo, SyncStatusInfo } from '../../shared/types';
+import { formatElapsed } from '../../shared/format';
 import { isPomodoro, getPomodoro, mmss, cssVars } from '../helpers';
 import {
   LogoMark, IconSearch, IconArrowRight, IconPlus, IconSync, IconDownload,
@@ -49,7 +50,8 @@ function rowValue(t: TimerDTO): string {
     if (t.runState === 'running' || t.runState === 'paused') return mmss(t.remainingMs ?? 0);
     return mmss(t.config.preset_ms ?? 0);
   }
-  return `${Math.floor((t.elapsedMs ?? 0) / 1000)} 秒`; // 正计时只显示秒
+  // 正计时与移动端同口径：mm:ss / h:mm:ss，不退回裸秒数（90 分钟显示「90:00」而非「5400 秒」）
+  return formatElapsed(t.elapsedMs ?? 0);
 }
 
 export default function Sidebar(p: Props) {
