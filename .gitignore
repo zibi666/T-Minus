@@ -55,3 +55,6 @@ local.properties
 Thumbs.db
 .DS_Store
 VERSION.bak
+
+# 编码代理会话产物
+.pi/
