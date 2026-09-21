@@ -724,7 +724,9 @@ export class TimerEngine {
 
     const keepTagIds = new Set<string>();
     for (const name of clean) {
-      let tag = this.db.get('SELECT * FROM tag WHERE name = ? AND deleted = 0', [name]);
+      // 按名查重必须带账号作用域（与 listTags 一致）：否则多账号同机时会把标签链到别人名下的同名 tag
+      const s = this.scope('user_id');
+      let tag = this.db.get('SELECT * FROM tag WHERE name = ? AND deleted = 0 AND ' + s.sql, [name, ...s.params]);
       if (!tag) {
         const color = tagColorFor(name);
         const tid = uuid();

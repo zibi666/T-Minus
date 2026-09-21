@@ -83,8 +83,9 @@ function useDateParts(initial?: string) {
   const [mo, setMo] = useState(m ? String(Number(m[2])) : '');
   const [d, setD] = useState(m ? String(Number(m[3])) : '');
   const yearNow = new Date().getFullYear();
+  // 年份范围与 Android/Harmony 对齐：当前年-10 ~ 当前年+30（旧版本 -20..+40 与两端不一致）
   const years: string[] = [];
-  for (let i = yearNow - 20; i <= yearNow + 40; i++) years.push(String(i));
+  for (let i = yearNow - 10; i <= yearNow + 30; i++) years.push(String(i));
   const daysInMonth = y && mo ? new Date(Number(y), Number(mo), 0).getDate() : 31;
   const dayMax = Math.min(d ? Number(d) : 1, daysInMonth);
   function setMonth(v: string) {
@@ -99,8 +100,10 @@ function useDateParts(initial?: string) {
       if (d && Number(d) > dim) setD(String(dim));
     }
   }
-  const targetDate = y && mo && d
-    ? `${y}-${String(Number(mo)).padStart(2, '0')}-${String(Number(d)).padStart(2, '0')}`
+  // targetDate 必须与界面显示的日一致（下拉始终显示 dayMax 兜底 1）：
+  // 用未提交的原始 d 判空会出现「显示 1 日却报请选择目标日期」的自相矛盾
+  const targetDate = y && mo
+    ? `${y}-${String(Number(mo)).padStart(2, '0')}-${String(dayMax || 1).padStart(2, '0')}`
     : '';
   return { y, mo, d: dayMax ? String(dayMax) : d, years, daysInMonth, setYear, setMonth, setDay: setD, targetDate };
 }

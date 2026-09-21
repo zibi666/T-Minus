@@ -3,8 +3,12 @@ import { LocalDB, uuid, safeParse, Row } from './db';
 import { AuthInfo, SyncStatusInfo } from '../src/shared/types';
 import { SYNC_TABLE_COLUMNS } from '../src/shared/contract';
 
-// 生产同步服务地址（内置，不暴露给用户配置）：腾讯云服务器 systemd timemark.service
-const DEFAULT_SERVER = 'http://118.195.133.25:18080';
+// 生产同步服务地址（内置，不暴露给用户配置）：
+//   域名 sync.knowhub.chat → Cloudflare DNS 解析到 118.195.133.25
+//   nginx 监听 18443/TCP + Let's Encrypt 证书（DNS-01 验证，公信 CA，客户端无需携带任何证书）
+//   18443 是非标端口，不受腾讯云未备案域名拦截影响
+//   部署/续证步骤见 deploy/TLS-CUTOVER.md
+const DEFAULT_SERVER = 'https://sync.knowhub.chat:18443';
 
 // 与服务端一致的列映射：唯一来源见 src/shared/contract.ts（引擎 importData 共用）
 const COLS = SYNC_TABLE_COLUMNS;
@@ -22,7 +26,7 @@ interface AuthResp {
   user?: { id?: string; username?: string };
   message?: string;
 }
-interface PushResultItem { operation_id?: string; status?: string }
+interface PushResultItem { operation_id?: string; status?: string; reason?: string; duplicate?: boolean }
 interface PushResp { results?: PushResultItem[] }
 interface PullChange { change_seq: number; table_name: string; origin_device_id?: string; payload?: Row }
 interface PullResp { changes?: PullChange[]; has_more?: boolean }
@@ -112,6 +116,14 @@ export class SyncClient {
       this.db.setMeta('auth_token', this.token);
       this.db.setMeta('auth_uid', this.userId);
       this.db.setMeta('auth_username', this.username);
+      // change_seq 是全局自增：换账号后旧账号的高水位游标会让新账号的历史变更永远拉不到，
+      // 旧账号残留的待传队列更会把数据推到新账号名下。401 过期不算换号（同号重登要保队列）
+      const prevUid = this.db.getMeta('sync_uid');
+      if (prevUid !== this.userId) {
+        this.db.run("DELETE FROM meta WHERE key = 'pull_cursor'");
+        this.db.run('DELETE FROM pending_ops');
+      }
+      this.db.setMeta('sync_uid', this.userId);
       this.adoptOrphans(this.userId);
       return { ok: true };
     } catch (e) {
@@ -124,16 +136,27 @@ export class SyncClient {
     this.userId = null;
     this.username = null;
     this.expired = false;
-    for (const k of ['auth_token', 'auth_uid', 'auth_username']) {
+    // pull_cursor 一并清：change_seq 全局自增，留着高水位，下一个登录的账号历史变更会永远拉不到；
+    // pending_ops 是上一个账号的写，换账号后带 token 重推只会把数据搬错账号名下
+    for (const k of ['auth_token', 'auth_uid', 'auth_username', 'pull_cursor', 'sync_uid']) {
       this.db.run('DELETE FROM meta WHERE key = ?', [k]);
     }
+    this.db.run('DELETE FROM pending_ops');
     this.emit('idle');
   }
 
   /** 登录后认领离线期产生的无主数据（单账号个人应用语义） */
   private adoptOrphans(uid: string) {
     for (const t of Object.keys(COLS)) {
-      this.db.run(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`, [uid]);
+      this.db.transaction(() => {
+        const orphans = this.db.all(`SELECT * FROM ${t} WHERE user_id IS NULL`);
+        for (const row of orphans) {
+          this.db.run(`UPDATE ${t} SET user_id = ? WHERE id = ?`, [uid, row.id]);
+          // 认领必须同时补 create op：只改 user_id 的话这批行没有任何上行通道，
+          // 未登录离线期的计时/记录会永远躺在本地（对齐 Android adoptAndEnqueueOrphans）
+          this.enqueue({ table: t, opType: 'create', row: { ...row, user_id: uid }, baseVersion: null, isRun: false });
+        }
+      });
     }
   }
 
@@ -196,7 +219,11 @@ export class SyncClient {
       for (const r of data.results || []) {
         // 防御：operation_id 缺失时跳过本地消费（服务端幂等表会在下轮返回 duplicate + operation_id 收敛）
         if (!r || r.operation_id == null) continue;
-        // accepted/duplicate 正常消费；conflict/discarded → 丢弃本地操作，随后 pull 拉回服务端现状（§6）
+        // 只有终态才能消费掉本地 op。server_error/未知状态必须保留重投——
+        // 瞬时故障被当终态删掉就是静默丢数据；同时停止本轮后续 op，保持队列顺序
+        const terminal = r.duplicate === true || ['accepted', 'conflict', 'discarded', 'bad_request'].includes(r.status ?? '');
+        if (!terminal) return;
+        // accepted 正常消费；conflict/discarded → 丢弃本地操作，随后 pull 拉回服务端现状（§6）
         this.db.run('DELETE FROM pending_ops WHERE operation_id = ?', [r.operation_id]);
         consumed++;
       }
@@ -223,8 +250,10 @@ export class SyncClient {
             continue;
           }
           const rid = ch.payload == null ? null : ch.payload.id;
-          // 本行还有未上传的本地操作：不消费，游标也不越过它，等 op 被服务端确认后下一轮重投
-          if (rid != null && this.hasQueuedOp(ch.table_name, String(rid))) continue;
+          // 本行还有未上传的本地操作：游标只能停在它之前（连续前缀，§5.3）。
+          // 同页后面更高级 seq 的行本轮一并放弃，等 op 被服务端确认后下一轮重取——
+          // 若继续消费后面的行，appliedMax 会越过被挡行，这条远端变更从此永不再投递
+          if (rid != null && this.hasQueuedOp(ch.table_name, String(rid))) break;
           appliedMax = Math.max(appliedMax, ch.change_seq);
           const appliedId = this.applyChange(ch);
           if (appliedId) touched.push([ch.table_name, appliedId]);

@@ -183,11 +183,18 @@ export class LocalDB {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    // 写临时文件再原子改名：直接覆盖式写整库时，断电/杀进程会留下截断文件，下次启动直接读不进来
-    const tmp = `${this.filePath}.tmp`;
-    fs.writeFileSync(tmp, Buffer.from(this.must.export()));
-    fs.renameSync(tmp, this.filePath);
+    try {
+      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+      // 写临时文件再原子改名：直接覆盖式写整库时，断电/杀进程会留下截断文件，下次启动直接读不进来
+      const tmp = `${this.filePath}.tmp`;
+      fs.writeFileSync(tmp, Buffer.from(this.must.export()));
+      fs.renameSync(tmp, this.filePath);
+    } catch (e) {
+      // saveSoon 经 setTimeout 触发到这里：.db 被杀毒/备份软件短暂占用(EPERM)、磁盘满等
+      // 瞬时错误不能变成主进程未捕获异常。保住内存库，退避后重试落盘
+      console.error('[db] flush 失败，5s 后重试：', e);
+      this.saveTimer = setTimeout(() => this.flush(), 5000);
+    }
   }
 
   getMeta(key: string): string | null {

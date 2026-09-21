@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import { LocalDB, uuid, Row } from './db';
 import { TimerEngine } from './timerEngine';
 import { gatherExport } from './exporter';
-import { CreateTimerInput, UpdateTimerPatch, TickPayload, UpdateInfo } from '../src/shared/types';
+import { CreateTimerInput, UpdateTimerPatch, TickPayload, UpdateInfo, TimerDTO } from '../src/shared/types';
 import { SyncClient } from './syncClient';
 
 // ---- 数据目录开关（§8 M2 双实例同步验收）----
@@ -257,11 +257,27 @@ function registerIpc(): void {
   });
 }
 
+/**
+ * tick 变更检测签名：只取会随时间/用户操作变化的字段，避免 JSON.stringify 全量序列化
+ * 带来的字符串垃圾（计时器多时影响 GC）。version 涵盖所有 DB 写入（名称/标签/配置/运行态），
+ * remainingMs/elapsedMs/pomoPhase/pomoRound/daysLeft 涵盖 tick 自发的展示值变化。
+ */
+function tickSignature(timers: TimerDTO[]): string {
+  let sig = '';
+  for (const t of timers) {
+    sig += t.id + ':' + t.version + ':' + t.runState + ':'
+      + (t.remainingMs ?? 0) + ':' + (t.elapsedMs ?? 0) + ':'
+      + (t.pomoPhase ?? '') + ':' + (t.pomoRound ?? 0) + ':'
+      + (t.daysLeft ?? 0) + ';';
+  }
+  return sig;
+}
+
 let lastTickSig = ''; // tick 变更检测：空闲（无任何计时值变化）时不向渲染层广播，避免无效全树 re-render
 function broadcastTick(): void {
   engine.tick();
   const timers = engine.list();
-  const sig = JSON.stringify(timers);
+  const sig = tickSignature(timers);
   if (sig === lastTickSig) return;
   lastTickSig = sig;
   const payload: TickPayload = { now: Date.now(), timers };
