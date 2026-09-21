@@ -69,15 +69,16 @@ fun StatBlock(label: String, value: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Chip(text: String, active: Boolean, onClick: () -> Unit) {
+fun Chip(text: String, active: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Text(
         text,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(if (active) C.cyan.copy(alpha = 0.18f) else C.stroke)
-            .clickable { onClick() }
+            .then(if (enabled) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        color = if (active) C.cyan else C.textLow,
+        // 禁用态降不透明度，避免用户误以为仍可点击
+        color = if (!enabled) C.textLow.copy(alpha = 0.4f) else if (active) C.cyan else C.textLow,
         fontSize = 12.sp
     )
 }

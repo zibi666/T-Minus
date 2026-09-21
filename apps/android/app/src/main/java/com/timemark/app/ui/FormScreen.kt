@@ -73,6 +73,9 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
     var rounds by remember { mutableStateOf<Long>(4L) }
     var error by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
+    // 编辑态记住原始 preset_ms：用户没动时长控件时保存原值（30s 这类非整分钟不被 60000 整除静默改掉）
+    var origPresetMs by remember { mutableStateOf<Long?>(null) }
+    var presetTouched by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(editId) {
         if (editId == null) { loaded = true; return@LaunchedEffect }
@@ -82,6 +85,8 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
         // 逻辑类型：番茄钟（PRECISE + pomodoro 配置）在 UI 上显示为 POMODORO 选中
         type = com.timemark.app.core.Types.logical(e.type, e.config_json)
         targetDate = cfg.target_date ?: ""
+        origPresetMs = cfg.preset_ms
+        presetTouched = false
         presetMin = cfg.preset_ms?.let { it / 60000 } ?: 25L
         focusMin = cfg.workMs() / 60000
         shortMin = cfg.shortBreakMs() / 60000
@@ -108,11 +113,14 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
         TextField("名称", name) { name = it }
         Spacer(Modifier.height(12.dp))
 
-        Text("类型", color = C.textLow, fontSize = 12.sp)
+        Text("类型" + (if (editId != null) "（创建后不可更改）" else ""), color = C.textLow, fontSize = 12.sp)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // 编辑时禁改类型：Repo.updateMeta 遇 typeChanged 会清 run_state/run_json/session_id，
+            // 运行中误改会静默丢失当前进度（与 Windows TimerForm 一致）
+            val typeEditable = editId == null
             listOf(Types.PRECISE, Types.STOPWATCH, Types.POMODORO, Types.DATE).forEach { tp ->
-                Chip(typeLabel(tp), type == tp) { type = tp }
+                Chip(typeLabel(tp), type == tp, enabled = typeEditable) { type = tp }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -145,7 +153,7 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
                 Text("预设时长（分钟）", color = C.textLow, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PRESET_MIN.forEach { m -> Chip("${m}分", presetMin == m) { presetMin = m } }
+                    PRESET_MIN.forEach { m -> Chip("${m}分", presetMin == m) { presetTouched = true; presetMin = m } }
                 }
             }
             Types.POMODORO -> {
@@ -177,9 +185,16 @@ fun FormScreen(c: AppContainer, editId: String?, onBack: () -> Unit) {
                     if (name.isBlank()) { error = "名称不能为空"; return@clickable }
                     if (type == Types.DATE && targetDate.isBlank()) { error = "请选择目标日期"; return@clickable }
                     scope.launch {
-                        val json = TimerRepository.buildJson(
-                            type, targetDate.ifBlank { null }, presetMin, focusMin, shortMin, longMin, rounds
-                        )
+                        // 局部变量承接以完成非空判定（delegated 属性不能 smart cast）
+                        val keepMs = origPresetMs
+                        val json = if (type == Types.PRECISE && !presetTouched && keepMs != null) {
+                            // 用户未改动时长控件：原样保留 preset_ms，改动的只是名称/颜色等元数据
+                            Contract.preciseConfigJson(keepMs).toString()
+                        } else {
+                            TimerRepository.buildJson(
+                                type, targetDate.ifBlank { null }, presetMin, focusMin, shortMin, longMin, rounds
+                            )
+                        }
                         // 数据库 type：番茄钟统一存 PRECISE_COUNTDOWN（与 Windows 对齐），其余按逻辑类型存
                         val dbType = if (type == Types.POMODORO) Types.PRECISE else type
                         if (editId == null) {
@@ -255,19 +270,22 @@ private fun DateRow(current: String, onChange: (String) -> Unit) {
     var y by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.take(4)?.toIntOrNull() ?: cal.get(java.util.Calendar.YEAR)) }
     var m by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.let { it.substring(5, 7).toIntOrNull() } ?: (cal.get(java.util.Calendar.MONTH) + 1)) }
     var d by remember(current) { mutableStateOf(current.takeIf { it.isNotBlank() }?.takeLast(2)?.toIntOrNull() ?: cal.get(java.util.Calendar.DAY_OF_MONTH)) }
-    val dim = java.time.YearMonth.of(y.coerceIn(1900, 2200), m.coerceIn(1, 12)).lengthOfMonth()
+    // 改月/年后把 d 钳制到当月天数并回写，防止存出 02-31 这类不存在的日期
+    fun dimOf(yy: Int, mm: Int) = java.time.YearMonth.of(yy.coerceIn(1900, 2200), mm.coerceIn(1, 12)).lengthOfMonth()
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         DropdownCell("$y 年") { menu ->
-            (cal.get(java.util.Calendar.YEAR)..cal.get(java.util.Calendar.YEAR) + 30).forEach { yy ->
-                DropdownMenuItem(text = { Text("$yy 年", color = C.text) }, onClick = { y = yy; onChange("%04d-%02d-%02d".format(y, m, d)); menu() })
+            // 年份范围与 Harmony/Windows 对齐：当前年-10 ~ 当前年+30（旧版本只能选今年..+30，无法设“去年的考研倒计时”）
+            val baseYear = cal.get(java.util.Calendar.YEAR)
+            ((baseYear - 10)..(baseYear + 30)).forEach { yy ->
+                DropdownMenuItem(text = { Text("$yy 年", color = C.text) }, onClick = { y = yy; d = d.coerceAtMost(dimOf(y, m)); onChange("%04d-%02d-%02d".format(y, m, d)); menu() })
             }
         }
         DropdownCell("$m 月") { menu ->
-            (1..12).forEach { mm -> DropdownMenuItem(text = { Text("$mm 月", color = C.text) }, onClick = { m = mm; onChange("%04d-%02d-%02d".format(y, m, d)); menu() }) }
+            (1..12).forEach { mm -> DropdownMenuItem(text = { Text("$mm 月", color = C.text) }, onClick = { m = mm; d = d.coerceAtMost(dimOf(y, m)); onChange("%04d-%02d-%02d".format(y, m, d)); menu() }) }
         }
         DropdownCell("$d 日") { menu ->
-            (1..dim).forEach { dd -> DropdownMenuItem(text = { Text("$dd 日", color = C.text) }, onClick = { d = dd; onChange("%04d-%02d-%02d".format(y, m, d)); menu() }) }
+            (1..dimOf(y, m)).forEach { dd -> DropdownMenuItem(text = { Text("$dd 日", color = C.text) }, onClick = { d = dd; onChange("%04d-%02d-%02d".format(y, m, d)); menu() }) }
         }
     }
 }
