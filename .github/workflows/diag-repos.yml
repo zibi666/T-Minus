@@ -1,0 +1,36 @@
+name: diag-repos
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  diag:
+    name: 临时：探测仓库可达性（用完即删）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: 逐仓库探测 KSP plugin marker
+        shell: bash
+        run: |
+          P="com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/2.0.20-1.0.25/com.google.devtools.ksp.gradle.plugin-2.0.20-1.0.25.pom"
+          for base in \
+            "https://maven.aliyun.com/repository/gradle-plugin" \
+            "https://maven.aliyun.com/repository/google" \
+            "https://maven.aliyun.com/repository/public" \
+            "https://dl.google.com/dl/android/maven2" \
+            "https://repo1.maven.org/maven2" \
+            "https://plugins.gradle.org/m2" ; do
+            printf '%-52s ' "$base"
+            curl -sS -o /tmp/pom -m 40 -w 'http=%{http_code} time=%{time_total}s size=%{size_download}\n' "$base/$P" 2>&1 | tail -1
+            head -c 60 /tmp/pom | tr -d '\n'; echo
+          done
+          echo "=== 出口 IP / 归属 ==="
+          curl -sS -m 20 https://api.ipify.org; echo
+      - name: 直接复现 Gradle 的解析（带 --info 抓首个错）
+        shell: bash
+        run: |
+          cd apps/android
+          ./gradlew :app:testDebugUnitTest --info 2>&1 | grep -iE "aliyun|repo1|plugins.gradle|dl.google|Could not|Resource missing|Cannot|timeout|403|404|Downloading" | head -60 || true
