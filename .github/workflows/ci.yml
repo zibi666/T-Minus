@@ -86,6 +86,25 @@ jobs:
           console.log('APK 版本号核对通过：v'+got);
           "
 
+  harmony:
+    name: 鸿蒙端（契约 + 引擎回归）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # 两个脚本用 TypeScript 把 .ets 转译成 CommonJS 后在 node 里断言，跑的就是设备上那份
+      # 源码，不复制逻辑。本地会优先用 DevEco 自带的 tsc，CI 上没有 DevEco，落到
+      # require('typescript') —— 由根 package.json 的 devDependencies 提供。
+      - run: npm ci
+      - name: 契约 fixture 与 Contract.ets 逐字段一致
+        run: node tools/harmony-contract-test.mjs
+      - name: 引擎纯函数回归
+        run: node tools/harmony-engine-test.mjs
+
   backend:
     name: 同步服务端（编译）
     runs-on: ubuntu-latest
