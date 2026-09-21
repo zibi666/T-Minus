@@ -47,7 +47,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
-      - uses: android-actions/setup-android@v3
+      # 以前这里是 android-actions/setup-android@v3，它按「latest」拼 cmdline-tools 的下载地址，
+      # 而 Google 现在要求先同意服务条款才放行那个链接 → 固定 404 → 这一步必失败，
+      # 四个 job 里只有 Android 红，而且从来没跑到过 Gradle。
+      # ubuntu-latest 镜像本来就预装了 Android SDK（cmdline-tools + platforms/android-35 +
+      # build-tools/35.0.0 + 已接受许可），所以改成「缺什么补什么」：预装齐全就零下载，
+      # 镜像哪天把 android-35 裁掉了也能自愈，不会再把 CI 挂死。
+      - name: 确保 compileSdk 平台与 build-tools 就位
+        shell: bash
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "Android SDK: $SDK_DIR"
+          if [ -d "$SDK_DIR/platforms/android-35" ] && [ -d "$SDK_DIR/build-tools/35.0.0" ]; then
+            echo "镜像已预装 platforms/android-35 与 build-tools/35.0.0，跳过下载"
+            exit 0
+          fi
+          SDKMGR="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMGR" ] || SDKMGR="$SDK_DIR/cmdline-tools/bin/sdkmanager"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: wrapper
