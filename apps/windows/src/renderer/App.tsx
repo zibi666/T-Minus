@@ -235,7 +235,7 @@ export default function App() {
     if (!t || t.runState !== 'running') return;
     if (isPomodoro(t)) window.timemark.skipPhase(t.id).then((d) => { mergeDto(d); refreshLedger(); });
     else if (t.type === 'PRECISE_COUNTDOWN' || t.type === 'STOPWATCH') {
-      window.timemark.segment(t.id).then(() => refreshLedger());
+      window.timemark.segment(t.id).then((d) => { mergeDto(d); refreshLedger(); });
     }
   }
 
@@ -244,7 +244,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
       const tag = (el?.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable) return;
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || el?.isContentEditable) return;
       if (editing || loginOpen) return;
       // 台钟打开时快捷键作用于台钟计时器，而非侧栏选中项
       const target = fullscreenTimer ?? selected;

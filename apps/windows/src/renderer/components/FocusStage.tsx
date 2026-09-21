@@ -201,7 +201,7 @@ export default function FocusStage({ timer: t, actions }: Props) {
         <MilestonePanel timerId={t.id} active={running || paused} />
         <div className="stage-actions">
           {!active && <button className="btn-accent" onClick={actions.start}><IconPlay size={13} /><span>开始</span></button>}
-          {running && <button className="btn-accent" onClick={actions.segment}><IconSegment size={13} /><span>打点</span></button>}
+          {(running || paused) && <button className="btn-accent" onClick={actions.segment}><IconSegment size={13} /><span>打点</span></button>}
           {running && <button className="btn-ghost" onClick={actions.pause}><IconPause size={13} /><span>暂停</span></button>}
           {paused && <button className="btn-accent" onClick={actions.resume}><IconPlay size={13} /><span>继续</span></button>}
           {(running || paused) && <button className="btn-ghost danger" onClick={actions.end}><IconStop size={12} /><span>结束</span></button>}
@@ -252,7 +252,7 @@ export default function FocusStage({ timer: t, actions }: Props) {
         <MilestonePanel timerId={t.id} active={running || paused} />
         <div className="stage-actions">
           {!active && <button className="btn-accent" onClick={actions.start}><IconPlay size={13} /><span>开始</span></button>}
-          {running && <button className="btn-accent" onClick={actions.segment}><IconSegment size={13} /><span>打点</span></button>}
+          {(running || paused) && <button className="btn-accent" onClick={actions.segment}><IconSegment size={13} /><span>打点</span></button>}
           {running && <button className="btn-ghost" onClick={actions.pause}><IconPause size={13} /><span>暂停</span></button>}
           {paused && <button className="btn-accent" onClick={actions.resume}><IconPlay size={13} /><span>继续</span></button>}
           {(running || paused) && <button className="btn-ghost danger" onClick={actions.end}><IconStop size={12} /><span>停止并记录</span></button>}

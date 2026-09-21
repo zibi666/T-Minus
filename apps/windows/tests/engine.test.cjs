@@ -128,6 +128,36 @@ test('打点不打断倒计时，且不中断时不重复计入统计', () => {
   assert.strictEqual(records(t.id)[0].record_type, 'SEGMENT');
 });
 
+test('暂停态同样可以打点：保留 remaining_at_pause 与 segments_ms，不回到 running', () => {
+  const t = createPrecise(600000);
+  engine.start(t.id);
+  // 推进到已过 100 秒：直接把 target_at 改到 500 秒后，等价于跑了 100 秒
+  const r = row(t.id);
+  db.run('UPDATE timer_item SET run_json = ? WHERE id = ?', [
+    JSON.stringify({ ...JSON.parse(r.run_json), target_at: Date.now() + 500000 }), t.id
+  ]);
+  engine.reloadRow(t.id);
+  engine.pause(t.id);
+  const pausedRun = JSON.parse(row(t.id).run_json);
+  assert.ok(pausedRun.remaining_at_pause > 0, '暂停必须留下剩余量');
+
+  engine.segment(t.id);
+  const after = JSON.parse(row(t.id).run_json);
+  assert.strictEqual(row(t.id).run_state, 'paused', '暂停态打点不得改变运行态');
+  assert.strictEqual(after.remaining_at_pause, pausedRun.remaining_at_pause, '暂停态打点不得动剩余量');
+  assert.ok(after.target_at === undefined, '暂停分支不该留下 target_at');
+  assert.strictEqual(after.segments_ms.length, 1, '暂停态打点必须记一段');
+  assert.ok(after.segments_ms[0] >= 100000, `第一段应约等于已进行的 100 秒，实际 ${after.segments_ms[0]}`);
+  assert.strictEqual(records(t.id).length, 1);
+  assert.strictEqual(records(t.id)[0].record_type, 'SEGMENT');
+
+  // 继续后倒计时仍从暂停处接着走，不因打点重置
+  engine.resume(t.id);
+  const resumed = JSON.parse(row(t.id).run_json);
+  assert.strictEqual(row(t.id).run_state, 'running');
+  assert.ok(resumed.segments_ms.length === 1, '继续不得丢已记录的分段');
+});
+
 test('正计时：暂停保留累计、继续只开新段、停止写 STOPWATCH 记录', () => {
   const t = createStopwatch();
   engine.start(t.id);

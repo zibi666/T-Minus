@@ -174,7 +174,7 @@ function registerIpc(): void {
   ipcMain.handle('timers:list', () => engine.list());
   ipcMain.handle('timers:create', (_e, input: CreateTimerInput) => engine.create(input));
   ipcMain.handle('timers:update', (_e, id: string, patch: UpdateTimerPatch) => engine.update(id, patch));
-  ipcMain.handle('timers:start', (_e, id: string, payload?: { durationMs?: number }) => engine.start(id, payload));
+  ipcMain.handle('timers:start', (_e, id: string) => engine.start(id));
   ipcMain.handle('timers:pause', (_e, id: string) => engine.pause(id));
   ipcMain.handle('timers:resume', (_e, id: string) => engine.resume(id));
   ipcMain.handle('timers:reset', (_e, id: string) => engine.reset(id));
@@ -358,8 +358,20 @@ app.whenReady().then(async () => {
   setInterval(() => { void checkUpdate().catch(() => {}); }, 6 * 60 * 60 * 1000);
 });
 
-app.on('before-quit', () => {
-  if (db) db.flush();
+let quitDeferrals = 0;
+
+app.on('before-quit', (e) => {
+  if (!db) return;
+  const d = db;
+  d.flush();
+  // flush 失败会进 5s 退避重试，而 app.quit() 不等这 5s → 直接退出就丢掉这批未落盘写入。
+  // 取消本次退出，等重试落地后再真正退出；最多让用户等 3 轮，避免磁盘长期不可写时卡死在退出流程。
+  if (d.flushFailed && quitDeferrals < 3) {
+    e.preventDefault();
+    quitDeferrals++;
+    isQuitting = true; // 与托盘退出路径一致：让 close 钩子继续隐藏窗口，不要再次触发退出
+    d.onFlushSettled = () => { d.onFlushSettled = null; app.quit(); };
+  }
 });
 
 app.on('window-all-closed', () => {

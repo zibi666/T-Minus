@@ -73,7 +73,7 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
             Spacer(Modifier.width(6.dp))
             ColorDot(t.color, 12); Spacer(Modifier.width(8.dp))
             Text(t.name, color = C.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1)
-            TypeBadge(t.type)
+            TypeBadge(logicalType)
             Spacer(Modifier.width(8.dp))
             Icon(Icons.Filled.Edit, "编辑", tint = C.textLow,
                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onEdit(t.id) }.padding(6.dp))
@@ -132,6 +132,8 @@ fun DetailScreen(c: AppContainer, timerId: String, onBack: () -> Unit, onEdit: (
                         }
                         Types.PAUSED -> {
                             ActionButton("继续", C.mint) { scope.launch { c.repo.resume(t.id) } }
+                            // 引擎 segment() 放行 paused：暂停后仍可给已进行的时段打点
+                            if (!isPomo) ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
                             ActionButton("结束", C.danger) { scope.launch { c.repo.stop(t.id) } }
                         }
                         else -> {

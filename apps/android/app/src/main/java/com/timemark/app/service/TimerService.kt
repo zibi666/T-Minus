@@ -106,7 +106,11 @@ class TimerService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val now = System.currentTimeMillis()
         val running = app.container.db.timerDao().runningAll(app.container.auth.uid()).filter { it.type != Types.DATE }
-        if (running.isEmpty()) return
+        // 没有计时在跑就停掉前台服务：否则通知会停留在最后一条内容并常驻，直到下次 onStartCommand
+        if (running.isEmpty()) {
+            stopSelf()
+            return
+        }
         // 多计时器：首条做标题，其余汇总到内容行（最多展示 3 条避免通知过长）
         val lines = mutableListOf<String>()
         for (t in running.take(3)) {
@@ -123,7 +127,9 @@ class TimerService : Service() {
                 }
                 t.type == Types.PRECISE -> "剩余 " + Fmt.hms(s.remainingMs)
                 t.type == Types.STOPWATCH -> "已进行 " + Fmt.hms(s.elapsedMs)
-                else -> continue
+                // running 已过滤掉 DATE，正常不可达；显式 return 而不是 continue，
+                // 避免「lines 空而 running 非空」时通知被静默跳过不更新
+                else -> return
             }
             lines.add("${t.name} · $text")
         }

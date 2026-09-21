@@ -222,7 +222,7 @@ export class TimerEngine {
 
   // ---------- 状态机（§3.3 / §3.4） ----------
 
-  start(id: string, payload?: { durationMs?: number }): TimerDTO | null {
+  start(id: string): TimerDTO | null {
     const rt = this.timers.get(id);
     if (!rt || rt.row.deleted) return null;
     if (rt.row.run_state === RUN_STATE.RUNNING) return this.dto(rt); // 防御：已在运行不重复 start
@@ -237,8 +237,11 @@ export class TimerEngine {
         rt.segStartMonoNs = this.monoNs();
       } else {
         const cfg = this.cfgOf(rt.row);
-        const dur = Math.round(payload?.durationMs ?? cfg.preset_ms ?? 0);
+        const dur = Math.round(cfg.preset_ms ?? 0);
         if (dur <= 0) return null;
+        // stop()/segment() 一律用 cfg.preset_ms 反算已进行时长，因此「本次计划的时长」必须与配置同源。
+        // 曾经这里允许 IPC 传入自定义 durationMs，会让 target_at/单调基准与记账口径分叉（stop 记出 20 分钟而实际只跑了 5 分钟）。
+        // 契约规定 PRECISE 的时长只来自 config.preset_ms，故不再接受外部覆盖。
         rt.row.run_json = JSON.stringify({ target_at: nowWall + dur, segments_ms: [] });
         rt.segStartRemainingMs = dur;
         rt.segStartMonoNs = this.monoNs();

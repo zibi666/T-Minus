@@ -159,7 +159,7 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
             Icon(Icons.Filled.Star, "收藏", tint = if (t.starred) C.amber else C.stroke,
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { scope.launch { c.repo.toggleStar(t.id) } }.padding(3.dp))
             Spacer(Modifier.width(4.dp))
-            TypeBadge(t.type)
+            TypeBadge(logicalType)
         }
         Spacer(Modifier.height(10.dp))
 
@@ -211,6 +211,8 @@ fun TimerCard(t: TimerItemEntity, now: Long, c: AppContainer, scope: kotlinx.cor
                         }
                         Types.PAUSED -> {
                             ActionButton("继续", C.mint) { scope.launch { c.repo.resume(t.id) } }
+                            // 引擎 segment() 放行 paused：暂停后仍可给已进行的时段打点
+                            if (!isPomo) ActionButton("分段", C.violet) { scope.launch { c.repo.segment(t.id) } }
                             ActionButton("结束", C.danger) { scope.launch { c.repo.stop(t.id) } }
                         }
                         else -> ActionButton("开始", C.mint) { scope.launch { c.repo.start(t.id) } }

@@ -79,6 +79,10 @@ export type Row = Record<string, unknown>;
 export class LocalDB {
   private db: SqlJsDatabase | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
+  /** 上一次 flush() 是否落盘失败（失败会进 5s 退避重试）。退出前据此判断能否安全结束进程 */
+  flushFailed = false;
+  /** 退避重试终于落地时回调一次（供 before-quit 延迟退出后重新触发 app.quit） */
+  onFlushSettled: (() => void) | null = null;
 
   /** init() 之前被调用属于编程错误，直接抛而不是静默产出脏数据 */
   private get must(): SqlJsDatabase {
@@ -106,8 +110,21 @@ export class LocalDB {
   private openReadable(SQL: SqlJsStatic): SqlJsDatabase {
     for (const p of [this.filePath, `${this.filePath}.bak`]) {
       if (!fs.existsSync(p)) continue;
+      let buf: Buffer;
       try {
-        const db = new SQL.Database(fs.readFileSync(p));
+        buf = fs.readFileSync(p);
+      } catch (e) {
+        console.error('[db] 数据库文件不可读:', p, e);
+        continue;
+      }
+      // sql.js 对 0 字节/被截断的文件不抛错，会静默开一个空库 —— 那会让完好的 .bak 失去回退机会。
+      // 先校验 SQLite 文件头（"SQLite format 3\0"），不合法就当不可读，继续试下一个候选。
+      if (buf.length < 16 || buf.toString('latin1', 0, 16) !== 'SQLite format 3\0') {
+        console.error('[db] 数据库文件不是有效的 SQLite 库（0 字节或文件头损坏）:', p);
+        continue;
+      }
+      try {
+        const db = new SQL.Database(buf);
         if (p !== this.filePath) console.warn('[db] 主库不可读，已回退到启动快照:', p);
         return db;
       } catch (e) {
@@ -189,10 +206,17 @@ export class LocalDB {
       const tmp = `${this.filePath}.tmp`;
       fs.writeFileSync(tmp, Buffer.from(this.must.export()));
       fs.renameSync(tmp, this.filePath);
+      if (this.flushFailed) {
+        this.flushFailed = false;
+        const cb = this.onFlushSettled;
+        this.onFlushSettled = null;
+        cb?.();
+      }
     } catch (e) {
       // saveSoon 经 setTimeout 触发到这里：.db 被杀毒/备份软件短暂占用(EPERM)、磁盘满等
       // 瞬时错误不能变成主进程未捕获异常。保住内存库，退避后重试落盘
       console.error('[db] flush 失败，5s 后重试：', e);
+      this.flushFailed = true;
       this.saveTimer = setTimeout(() => this.flush(), 5000);
     }
   }

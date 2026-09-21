@@ -145,6 +145,13 @@ object Engine {
                     else -> LiveState(runState, 0, acc)
                 }
             }
+            // DATE 无运行态，剩余天数由 Engine.daysLeft 按目标时区自然日算。
+            // 缺这个分支时 else 会落到 LiveState(runState, 0, 0)，daysLeft 恒为 null；
+            // 调用方若直接读 s.daysLeft 就会显示「未设置」（三个既有调用点各自另算 daysLeft 才没爆）。
+            Types.DATE -> {
+                val left = cfg.target_date?.let { daysLeft(it, cfg.timezone_id, cfg.include_today, now) }
+                LiveState(runState, 0, 0, daysLeft = left, due = left != null && left <= 0)
+            }
             else -> LiveState(runState, 0, 0)
         }
     }

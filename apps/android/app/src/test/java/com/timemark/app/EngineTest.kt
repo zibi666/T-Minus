@@ -124,6 +124,31 @@ class EngineTest {
     }
 
     @Test
+    fun date_countdown_live_reports_days_left() {
+        // Engine.live() 以前没有 DATE 分支，else 落到 LiveState(runState, 0, 0)，daysLeft 恒为 null；
+        // 调用方若直接读 s.daysLeft 就会显示「未设置」（此前三个调用点各自另算 daysLeft 才没爆）
+        val base = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val cfg = """{"schema_version":1,"target_date":"${base.plusDays(3)}"} """.trim()
+        val s = Engine.live(Types.DATE, Types.IDLE, null, cfg, now)
+        assertEquals(3L, s.daysLeft)
+        assertEquals(false, s.due)
+        assertEquals(0L, s.remainingMs)
+
+        val incl = """{"schema_version":1,"target_date":"${base.plusDays(3)}","include_today":true}"""
+        assertEquals(4L, Engine.live(Types.DATE, Types.IDLE, null, incl, now).daysLeft)
+
+        val past = """{"schema_version":1,"target_date":"${base.minusDays(7)}"} """.trim()
+        val over = Engine.live(Types.DATE, Types.IDLE, null, past, now)
+        assertEquals(-7L, over.daysLeft)
+        assertEquals(true, over.due)
+
+        // 坏日期不得崩：daysLeft 退化为 null 且不算到期
+        val bad = Engine.live(Types.DATE, Types.IDLE, null, """{"schema_version":1,"target_date":"not-a-date"}""", now)
+        assertEquals(null, bad.daysLeft)
+        assertEquals(false, bad.due)
+    }
+
+    @Test
     fun pomodoro_idle_shows_phase_from_run_json() {
         // 空闲态也按 run_json 留存阶段展示（与 Windows dto() 一致），他端重置后本端不会假装回到第 1 轮专注
         val run = """{"phase":"long_break","phase_ends_at":${now + 1000},"completed_focus":4}"""

@@ -147,6 +147,14 @@ export struct DetailScreen {
                 const repo = AppHolder.repo;
                 if (repo !== null) this.act('resume', () => repo.resume(this.timerId));
               } })
+              // 引擎 segment() 放行 paused：暂停后仍可给已进行的时段打点
+              if (this.card.logical !== LOGICAL_POMODORO) {
+                ActionButton({ label: '分段', kind: 'ghost', busy: this.busy === 'seg', onTap: () => {
+                  const repo = AppHolder.repo;
+                  if (repo === null) return;
+                  this.act('seg', () => repo.segment(this.timerId));
+                } })
+              }
               ActionButton({ label: '归零', kind: 'ghost', busy: this.busy === 'reset', onTap: () => {
                 const repo = AppHolder.repo;
                 if (repo !== null) this.act('reset', () => repo.reset(this.timerId));
