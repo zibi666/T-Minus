@@ -10,6 +10,9 @@ export function uuid(): string {
   return crypto.randomUUID();
 }
 
+/** 启动快照保留代：.bak 最新，越往后越早；主库损坏时按顺序回退 */
+const SNAPSHOT_SUFFIXES = ['.bak', '.bak.1', '.bak.2'];
+
 /** §4.1 通用同步列已在各表落实；M2 服务端 change_seq 游标接入前，先落本地结构 */
 const DDL = `
 CREATE TABLE IF NOT EXISTS timer_item (
@@ -98,17 +101,32 @@ export class LocalDB {
     this.must.run(DDL);
     this.migrate();
     this.flush();
-    // 每次启动留一份已知可读的快照：主库被外部损坏时至少能回到上一次启动的状态
+    this.rotateSnapshot();
+  }
+
+  /**
+   * 轮换启动快照：保留最近 SNAPSHOT_SUFFIXES.length 代，
+   * 让「主库被外部损坏」至少能回到前几次启动时的已知可读状态。
+   */
+  private rotateSnapshot(): void {
     try {
-      fs.copyFileSync(this.filePath, `${this.filePath}.bak`);
+      for (let i = SNAPSHOT_SUFFIXES.length - 1; i >= 1; i--) {
+        const older = `${this.filePath}${SNAPSHOT_SUFFIXES[i]}`;
+        const newer = `${this.filePath}${SNAPSHOT_SUFFIXES[i - 1]}`;
+        fs.rmSync(older, { force: true });
+        if (fs.existsSync(newer)) fs.renameSync(newer, older);
+      }
+      fs.copyFileSync(this.filePath, `${this.filePath}${SNAPSHOT_SUFFIXES[0]}`);
     } catch (e) {
-      console.error('[db] 快照写入失败:', e);
+      console.error('[db] 快照轮换失败:', e);
     }
   }
 
-  /** 主库读不进来就退回启动快照；两份都读不进则把坏文件留存后开空库，绝不静默丢数据 */
+  /** 主库读不进来就退回启动快照；全都读不进则把坏文件留存后开空库，绝不静默丢数据 */
   private openReadable(SQL: SqlJsStatic): SqlJsDatabase {
-    for (const p of [this.filePath, `${this.filePath}.bak`]) {
+    // 快照按代轮换（.bak 最新，.bak.1 / .bak.2 更早）：主库被写坏时最多能回退三代，
+    // 而不是像早年那样只有一份、每次启动都被覆盖成最新态
+    for (const p of [this.filePath, ...SNAPSHOT_SUFFIXES.map((s) => `${this.filePath}${s}`)]) {
       if (!fs.existsSync(p)) continue;
       let buf: Buffer;
       try {
@@ -154,10 +172,19 @@ export class LocalDB {
         if (id != null) this.must.run('UPDATE pending_ops SET row_id = ? WHERE operation_id = ?', [String(id), String(r.operation_id)]);
       }
     }
-    // 番茄钟统计已改由 timer_record 现场聚合，本机私有账本表作废（历史数据仍可从记录复原）
-    this.must.run('DROP TABLE IF EXISTS pomo_journal');
+    // 番茄钟统计已改由 timer_record 现场聚合，本机私有账本表作废（历史数据仍可从记录复原）。
+    // 表已不存在时这句是纯 no-op，加存在性判断只是省掉每次启动都发一条无用语句
+    if (this.all("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pomo_journal'").length > 0) {
+      this.must.run('DROP TABLE pomo_journal');
+    }
+    // 账号可见域按 user_id 过滤（scope()），不给 user_id 建索引会让 list/dailyStats 全表扫
     this.must.run('CREATE INDEX IF NOT EXISTS idx_record_ended ON timer_record(ended_at)');
     this.must.run('CREATE INDEX IF NOT EXISTS idx_timer_tag_timer ON timer_tag(timer_id)');
+    this.must.run('CREATE INDEX IF NOT EXISTS idx_timer_item_user ON timer_item(user_id)');
+    this.must.run('CREATE INDEX IF NOT EXISTS idx_record_user ON timer_record(user_id)');
+    this.must.run('CREATE INDEX IF NOT EXISTS idx_tag_user ON tag(user_id)');
+    this.must.run('CREATE INDEX IF NOT EXISTS idx_timer_tag_user ON timer_tag(user_id)');
+    this.must.run('CREATE INDEX IF NOT EXISTS idx_milestone_user ON milestone(user_id)');
   }
 
   run(sql: string, params: unknown[] = []): void {

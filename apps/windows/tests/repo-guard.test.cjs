@@ -30,8 +30,11 @@ const read = (p) => fs.readFileSync(p, 'utf-8');
 
 test('番茄钟统计不得回到本机私有账本表', () => {
   for (const f of sources) {
-    // 唯一合法的提及是迁移时丢弃这张历史表，先把 DROP 语句剥掉再匹配
-    const body = read(f).replace(/DROP TABLE IF EXISTS \w+/g, '');
+    // 唯一合法的提及是迁移时丢弃这张历史表：DROP 语句本身，以及「表还在不在」的
+    // 存在性探测（避免每次启动都空跑一次 DROP 弄脏库文件），两者都要剥掉再匹配
+    const body = read(f)
+      .replace(/DROP TABLE (IF EXISTS )?\w+/g, '')
+      .replace(/sqlite_master[^`;]*?pomo_journal/g, '');
     assert.ok(!/pomo_journal|JournalStore|KEY_JOURNAL/.test(body), `${f} 仍引用本机私有账本（统计应由已同步的 timer_record 派生）`);
   }
 });

@@ -136,18 +136,18 @@ function createWindow(): void {
       nodeIntegration: false
     }
   });
-let trayTipShown = false;
-// 关闭到托盘（M1：常驻托盘进程）
-win.on('close', (e) => {
-  if (!isQuitting) {
-    e.preventDefault();
-    win?.hide();
-    if (!trayTipShown && Notification.isSupported()) {
-      trayTipShown = true;
-      new Notification({ title: 'TimeMark 时光标', body: '已最小化到托盘，点击托盘图标可重新打开' }).show();
+  let trayTipShown = false;
+  // 关闭到托盘（M1：常驻托盘进程）
+  win.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      win?.hide();
+      if (!trayTipShown && Notification.isSupported()) {
+        trayTipShown = true;
+        new Notification({ title: 'TimeMark 时光标', body: '已最小化到托盘，点击托盘图标可重新打开' }).show();
+      }
     }
-  }
-});
+  });
   win.loadFile(path.join(__dirname, '../../renderer/index.html'));
 }
 
@@ -213,10 +213,10 @@ function registerIpc(): void {
     return r;
   });
   ipcMain.handle('auth:logout', () => {
-    sync.logout();
+    const { discarded } = sync.logout();
     engine.currentUserId = null;
     engine.load();
-    return { ok: true };
+    return { ok: true, discarded };
   });
   ipcMain.handle('sync:now', () => sync.syncNow());
   ipcMain.handle('sync:status', () => sync.lastStatusInfo());
@@ -362,6 +362,10 @@ let quitDeferrals = 0;
 
 app.on('before-quit', (e) => {
   if (!db) return;
+  // 已经走到 before-quit 就是要退出：无条件置位，让 close 钩子放行。
+  // 否则任何不走托盘菜单的退出路径（如 autoUpdater.quitAndInstall、单实例抢占、后续新增入口）
+  // 都会被 close 钩子 preventDefault 成「隐藏到托盘」，表现为点了退出却没退出
+  isQuitting = true;
   const d = db;
   d.flush();
   // flush 失败会进 5s 退避重试，而 app.quit() 不等这 5s → 直接退出就丢掉这批未落盘写入。
@@ -369,7 +373,6 @@ app.on('before-quit', (e) => {
   if (d.flushFailed && quitDeferrals < 3) {
     e.preventDefault();
     quitDeferrals++;
-    isQuitting = true; // 与托盘退出路径一致：让 close 钩子继续隐藏窗口，不要再次触发退出
     d.onFlushSettled = () => { d.onFlushSettled = null; app.quit(); };
   }
 });

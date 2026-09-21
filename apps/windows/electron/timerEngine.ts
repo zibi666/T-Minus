@@ -831,6 +831,9 @@ export class TimerEngine {
     const COLS = SYNC_TABLE_COLUMNS;
     const counts: Record<string, number> = {};
     const queued: Array<{ table: string; row: Record<string, unknown> }> = [];
+    // 账号归属改写：已登录 → 认领为当前账号（否则 engine.load() 按可见域过滤，导入的行「有库无界面」）；
+    // 未登录 → 置为无主行，登录后由 syncClient.adoptOrphans() 统一认领。
+    const uid = this.currentUserId;
     this.db.transaction(() => {
       for (const table of Object.keys(COLS)) {
         const rows = Array.isArray(p[table]) ? p[table] as Record<string, unknown>[] : [];
@@ -838,9 +841,10 @@ export class TimerEngine {
         let done = 0;
         for (const row of rows) {
           if (!row || row.id == null) continue;
-          const values = cols.map((c) => (row[c] !== undefined ? row[c] : null));
+          const values = cols.map((c) => (c === 'user_id' ? uid : (row[c] !== undefined ? row[c] : null)));
+          const stored = { ...row, user_id: uid };
           this.db.run(`INSERT OR REPLACE INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`, values);
-          queued.push({ table, row });
+          queued.push({ table, row: stored });
           done++;
         }
         counts[table] = done;

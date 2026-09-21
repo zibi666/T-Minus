@@ -131,7 +131,11 @@ export class SyncClient {
     }
   }
 
-  logout() {
+  /**
+   * 退出登录。返回被丢弃的未上传操作数：这些写入属于上一个账号，
+   * 带新 token 重推只会把它们搬错账号名下，只能清掉 —— 但必须让用户知道丢了什么。
+   */
+  logout(): { discarded: number } {
     this.token = null;
     this.userId = null;
     this.username = null;
@@ -141,8 +145,10 @@ export class SyncClient {
     for (const k of ['auth_token', 'auth_uid', 'auth_username', 'pull_cursor', 'sync_uid']) {
       this.db.run('DELETE FROM meta WHERE key = ?', [k]);
     }
+    const discarded = Number(this.db.get(`SELECT COUNT(*) AS n FROM pending_ops WHERE state='queued'`)?.n ?? 0);
     this.db.run('DELETE FROM pending_ops');
     this.emit('idle');
+    return { discarded };
   }
 
   /** 登录后认领离线期产生的无主数据（单账号个人应用语义） */
@@ -243,6 +249,7 @@ export class SyncClient {
       if (!changes.length) return;
       const touched: Array<[string, string]> = [];
       let appliedMax = cursor;
+      let blocked = false; // 本页中途撞上未上传的本地操作
       this.db.transaction(() => {
         for (const ch of changes) {
           if (ch.origin_device_id === this.deviceId) {
@@ -253,13 +260,14 @@ export class SyncClient {
           // 本行还有未上传的本地操作：游标只能停在它之前（连续前缀，§5.3）。
           // 同页后面更高级 seq 的行本轮一并放弃，等 op 被服务端确认后下一轮重取——
           // 若继续消费后面的行，appliedMax 会越过被挡行，这条远端变更从此永不再投递
-          if (rid != null && this.hasQueuedOp(ch.table_name, String(rid))) break;
+          if (rid != null && this.hasQueuedOp(ch.table_name, String(rid))) { blocked = true; break; }
           appliedMax = Math.max(appliedMax, ch.change_seq);
           const appliedId = this.applyChange(ch);
           if (appliedId) touched.push([ch.table_name, appliedId]);
         }
         this.db.setMeta('pull_cursor', String(appliedMax)); // 只推进到「连续已消费」前缀（§5.3）
       });
+      if (blocked) return; // 撞挡即收工：游标停在挡前行，下一轮 sync 必然还是从这一页开始重取，再拉一页纯属浪费
       if (appliedMax === cursor) return; // 整页都被挡住：别再空转重取同一页，等下一次 sync
       for (const [t, id] of touched) {
         if (this.onRemoteChange) this.onRemoteChange(t, id);

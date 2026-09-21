@@ -51,7 +51,7 @@ const api = {
     ipcRenderer.invoke('auth:login', serverUrl, username, password),
   register: (serverUrl: string, username: string, password: string): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('auth:register', serverUrl, username, password),
-  logout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('auth:logout'),
+  logout: (): Promise<{ ok: boolean; discarded: number }> => ipcRenderer.invoke('auth:logout'),
   syncNow: (): Promise<void> => ipcRenderer.invoke('sync:now'),
   syncStatus: (): Promise<SyncStatusInfo> => ipcRenderer.invoke('sync:status'),
   onSyncStatus: (cb: (s: SyncStatusInfo) => void) => subscribe<SyncStatusInfo>('sync-status', cb)
