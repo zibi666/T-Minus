@@ -1,14 +1,17 @@
 package com.timemark.app.data
 
 import android.os.SystemClock
+import androidx.room.withTransaction
 import com.timemark.app.core.ConfigJson
 import com.timemark.app.core.PomodoroConfig
 import com.timemark.app.core.Contract
 import com.timemark.app.core.Jsons
 import com.timemark.app.core.RunJson
 import com.timemark.app.core.Types
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -30,20 +33,35 @@ class TimerRepository(
     private val auth: AuthStore
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
-    fun observeTimers() = db.timerDao().observeLive()
-    fun observeRecords() = db.recordDao().observeAll()
+
+    // 读流按账号收口可见域：uidFlow 变化（登录/登出/换账号）即重订阅，列表实时切域（对齐 Windows 重建 engine.load）
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeTimers(): Flow<List<TimerItemEntity>> =
+        auth.uidFlow.flatMapLatest { db.timerDao().observeLive(it) }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeRecords(): Flow<List<TimerRecordEntity>> =
+        auth.uidFlow.flatMapLatest { db.recordDao().observeAll(it) }
+
     fun observeQueuedCount() = db.pendingOpDao().observeQueuedCount()
 
     /** 计时记录列表（历史页） */
-    fun observeDailyStats(): Flow<List<DayStat>> = combine(
-        db.timerDao().observeStatFlags(),
-        db.recordDao().observeStatRows()
-    ) { timers, rows -> aggregateDaily(timers, rows) }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeDailyStats(): Flow<List<DayStat>> = auth.uidFlow.flatMapLatest { uid ->
+        combine(
+            db.timerDao().observeStatFlags(uid),
+            db.recordDao().observeStatRows(uid)
+        ) { timers, rows -> aggregateDaily(timers, rows) }
+    }
 
     /** 变更串行锁：所有「读旧行 → 改 → 写 version+1」的入口都必须持锁。
      *  只保护 settleDue 是不够的：用户在阶段到点那一秒点结束/分段/跳过，会与到点推进各写一条记录、
      *  或把已经 stopped 的行留在 running；UI 开关（置顶/标签）带着陈旧 run_json 整行回写也会复活旧阶段。 */
     private val repoMutex = Mutex()
+
+    /** 供同步层 applyChange 与业务写入互斥：远端行若落在「读旧行 → 改 → 写」中间，
+     *  陈旧快照整行回写会复活已结束的阶段（与业务入口同锁，语义见上） */
+    suspend fun <T> withRepoLock(block: suspend () -> T): T = repoMutex.withLock { block() }
 
     /** §3.6 单调时钟守卫：内存基准表（不持久化，进程重启后懒重建，与 Windows segStartMonoNs 一致）。
      *  key = timerId。Main（用户操作）与 Default（结算循环）两侧都会读写，故必须是并发容器。 */
@@ -97,8 +115,9 @@ class TimerRepository(
 
     private suspend fun doUpdateMeta(
         id: String, name: String?, type: String?, color: String?, remark: String?, configJson: String?
-    ): String? {
-        val old = db.timerDao().byId(id) ?: return "计时不存在"
+    ): String? = db.withTransaction {
+        // 写库 + 入队同一事务：进程在两条语句之间被杀时，不会出现「本地改了却永不同步」
+        val old = db.timerDao().byId(id) ?: return@withTransaction "计时不存在"
         val now = System.currentTimeMillis()
         val newType = type ?: old.type
         var newConfig = configJson ?: old.config_json
@@ -142,13 +161,13 @@ class TimerRepository(
         db.timerDao().upsert(e)
         enqueue(PendingOpEntity(UUID.randomUUID().toString(), "timer_item", "update", e.id, rowPayload(e, typeChanged), old.version, typeChanged, now))
         if (typeChanged) monoBaselines.remove(id)
-        return rejected
+        return@withTransaction rejected
     }
 
     suspend fun deleteTimer(id: String) = repoMutex.withLock { doDeleteTimer(id) }
 
-    private suspend fun doDeleteTimer(id: String) {
-        val old = db.timerDao().byId(id) ?: return
+    private suspend fun doDeleteTimer(id: String) = db.withTransaction {
+        val old = db.timerDao().byId(id) ?: return@withTransaction
         val now = System.currentTimeMillis()
         val e = old.copy(deleted = true, run_state = Types.IDLE, version = old.version + 1, updated_at = now)
         db.timerDao().upsert(e)
@@ -162,8 +181,8 @@ class TimerRepository(
     private suspend fun toggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) =
         repoMutex.withLock { doToggleFlag(id, mutate) }
 
-    private suspend fun doToggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) {
-        val old = db.timerDao().byId(id) ?: return
+    private suspend fun doToggleFlag(id: String, mutate: (TimerItemEntity) -> TimerItemEntity) = db.withTransaction {
+        val old = db.timerDao().byId(id) ?: return@withTransaction
         val now = System.currentTimeMillis()
         val e = mutate(old).copy(version = old.version + 1, updated_at = now)
         db.timerDao().upsert(e)
@@ -270,22 +289,23 @@ class TimerRepository(
      */
     suspend fun segment(id: String) = repoMutex.withLock { doSegment(id) }
 
-    private suspend fun doSegment(id: String) {
-        val old = db.timerDao().byId(id) ?: return
-        if (isPomodoro(old)) return
-        if (old.run_state != Types.RUNNING && old.run_state != Types.PAUSED) return
+    private suspend fun doSegment(id: String) = db.withTransaction {
+        // 记录 + run_json 两个写位同事务落库（insertRecordRaw 内层事务会并入本事务）
+        val old = db.timerDao().byId(id) ?: return@withTransaction
+        if (isPomodoro(old)) return@withTransaction
+        if (old.run_state != Types.RUNNING && old.run_state != Types.PAUSED) return@withTransaction
         val now = System.currentTimeMillis()
         val run = Jsons.runJson(old.run_json)
         val cfg = Jsons.configJson(old.config_json)
         val running = old.run_state == Types.RUNNING
         when (old.type) {
             Types.PRECISE -> {
-                val preset = cfg.preset_ms ?: return
+                val preset = cfg.preset_ms ?: return@withTransaction
                 val totalElapsed = if (running) preset - maxOf(0, (run.target_at ?: now) - now)
                 else preset - (run.remaining_at_pause ?: 0)
                 val segs = (run.segments_ms ?: emptyList()).toMutableList()
                 val seg = totalElapsed - segs.sum()
-                if (seg <= 0) return // 无新分段（防重复打点）
+                if (seg <= 0) return@withTransaction // 无新分段（防重复打点）
                 segs.add(seg)
                 insertRecordRaw(old, Contract.manualStamp(now, seg), Types.RECORD_SEGMENT)
                 // 倒计时不中断：保留 target_at / remaining_at_pause，仅追加 segments_ms
@@ -296,7 +316,7 @@ class TimerRepository(
                 else (run.accumulated_ms ?: 0)
                 val segs = (run.segments_ms ?: emptyList()).toMutableList()
                 val lap = total - segs.sum()
-                if (lap <= 0) return
+                if (lap <= 0) return@withTransaction
                 segs.add(lap)
                 insertRecordRaw(old, Contract.manualStamp(now, lap), Types.RECORD_SEGMENT)
                 // 运行态：重置 segment_started_at 开新 lap；暂停态：仅追加 segments_ms
@@ -374,7 +394,7 @@ class TimerRepository(
 
     suspend fun settleDue(now: Long = System.currentTimeMillis()): List<Settled> = repoMutex.withLock {
         val settled = mutableListOf<Settled>()
-        for (raw in db.timerDao().runningAll()) {
+        for (raw in db.timerDao().runningAll(auth.uid())) {
             // §3.6 单调守卫：墙钟跳变 > 阈值时用 elapsedRealtime 修正 run_json，返回修正后实体
             val t = guardMonoClock(raw, now)
             val run = Jsons.runJson(t.run_json)
@@ -516,8 +536,9 @@ class TimerRepository(
      * 手动打点（SEGMENT/STOPWATCH）只在单台设备发生，继续用随机 UUID。
      */
     private suspend fun insertRecordRaw(t: TimerItemEntity, st: Contract.Stamp, type: String,
-                                        phaseKey: String? = null, completedFocus: Int = 0) {
-        if (!Contract.isRecordable(st)) return // 不足 1 秒的脏段不记账（阶段照常推进）
+                                        phaseKey: String? = null, completedFocus: Int = 0) = db.withTransaction {
+        // 记录 + 入队同事务；被外层事务（如 doSegment）调用时并入外层，不另起
+        if (!Contract.isRecordable(st)) return@withTransaction // 不足 1 秒的脏段不记账（阶段照常推进）
         val r = TimerRecordEntity(
             id = phaseKey?.let { Contract.recordId(t.id, t.session_id, it, completedFocus) }
                 ?: UUID.randomUUID().toString(),
@@ -541,7 +562,7 @@ class TimerRepository(
     suspend fun byId(id: String): TimerItemEntity? = db.timerDao().byId(id)
 
     suspend fun segmentsOfToday(timerId: String, since: Long): List<TimerRecordEntity> =
-        db.recordDao().ofTimerSince(timerId, since)
+        db.recordDao().ofTimerSince(timerId, since, auth.uid())
 
     /** 记录 → 按天统计（口径全在 Contract.contribute，本端只负责分组） */
     private fun aggregateDaily(timers: List<TimerStatRow>, rows: List<RecordStatRow>): List<DayStat> {

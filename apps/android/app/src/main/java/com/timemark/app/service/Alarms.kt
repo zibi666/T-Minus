@@ -67,7 +67,7 @@ class AlarmController(private val context: Context, private val container: () ->
     private suspend fun nextDue(): Pair<TimerItemEntity, Long>? {
         var best: Pair<TimerItemEntity, Long>? = null
         val now = System.currentTimeMillis()
-        for (t in container().db.timerDao().allForAlarm()) {
+        for (t in container().db.timerDao().allForAlarm(container().auth.uid())) {
             if (t.run_state != Types.RUNNING && t.type != Types.DATE) continue
             val due = dueAt(t, now) ?: continue
             if (due <= now) continue
@@ -140,7 +140,8 @@ class AlarmReceiver : BroadcastReceiver() {
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // 开机与覆盖安装（MY_PACKAGE_REPLACED）都会打断闹钟链，两种广播同待遇：补结算 + 恢复提醒
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val pending = goAsync()
         val app = context.applicationContext as com.timemark.app.TimeMarkApp
         app.appScope.launch {

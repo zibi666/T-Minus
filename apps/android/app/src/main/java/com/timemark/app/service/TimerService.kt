@@ -17,9 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /** 运行中计时的常驻通知（低优先级通道）+ 秒级到点结算。
  *  服务存活期间是「有计时在跑」的唯一时段，因此这里是精度最高的节拍；
@@ -44,7 +46,9 @@ class TimerService : Service() {
             return START_NOT_STICKY
         }
         // 防多协程泄漏：取消上一个循环再启新循环（START_STICKY 重启 / 重复 startForegroundService 场景）
-        loopJob?.cancel()
+        // cancelAndJoin 需要在协程上下文里执行，onStartCommand 是主线程，故用 runBlocking 阻塞等待旧循环完全退出：
+        // 旧实现用 cancel() 是非阻塞的，新旧循环可能重叠运行至多 1s，settleDue 虽有互斥锁但会浪费一轮循环
+        runBlocking { loopJob?.cancelAndJoin() }
         loopJob = scope.launch {
             var sinceAlarm = 0L
             while (isActive) {
@@ -101,7 +105,7 @@ class TimerService : Service() {
         val app = application as com.timemark.app.TimeMarkApp
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val now = System.currentTimeMillis()
-        val running = app.container.db.timerDao().runningAll().filter { it.type != Types.DATE }
+        val running = app.container.db.timerDao().runningAll(app.container.auth.uid()).filter { it.type != Types.DATE }
         if (running.isEmpty()) return
         // 多计时器：首条做标题，其余汇总到内容行（最多展示 3 条避免通知过长）
         val lines = mutableListOf<String>()

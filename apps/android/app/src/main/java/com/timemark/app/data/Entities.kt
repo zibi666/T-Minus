@@ -111,23 +111,26 @@ data class TimerStatRow(val id: String, val type: String, val config_json: Strin
 
 data class RecordStatRow(val timer_id: String, val ended_at: Long, val record_type: String, val duration_sec: Long)
 
+// 账号可见域（与 Windows TimerEngine.scope 同语义）：未登录(:uid 为 NULL)全放行（本机自持数据）；
+// 登录后只认无主行与自己名下的行——不收口时换账号登录会把上一个账号的数据列出来并可编辑，
+// 写回会被服务端按 token 判 foreign_row 拒掉，本地改动从此静默不再同步。byId 与 orphan/adopt 不受此限。
 @Dao
 interface TimerDao {
-    @Query("SELECT * FROM timer_item WHERE deleted = 0 ORDER BY pinned DESC, starred DESC, updated_at DESC")
-    fun observeLive(): Flow<List<TimerItemEntity>>
+    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid) ORDER BY pinned DESC, starred DESC, updated_at DESC")
+    fun observeLive(uid: String?): Flow<List<TimerItemEntity>>
 
-    @Query("SELECT id, type, config_json FROM timer_item")
-    fun observeStatFlags(): Flow<List<TimerStatRow>>
+    @Query("SELECT id, type, config_json FROM timer_item WHERE (:uid IS NULL OR user_id IS NULL OR user_id = :uid)")
+    fun observeStatFlags(uid: String?): Flow<List<TimerStatRow>>
 
     @Query("SELECT * FROM timer_item WHERE id = :id")
     suspend fun byId(id: String): TimerItemEntity?
 
-    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND run_state = 'running'")
-    suspend fun runningAll(): List<TimerItemEntity>
+    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND run_state = 'running' AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid)")
+    suspend fun runningAll(uid: String?): List<TimerItemEntity>
 
     /** 闹钟排程用：运行中的计时 + 日期倒计时（目标日零点提醒） */
-    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND (run_state = 'running' OR type = 'DATE_COUNTDOWN')")
-    suspend fun allForAlarm(): List<TimerItemEntity>
+    @Query("SELECT * FROM timer_item WHERE deleted = 0 AND (run_state = 'running' OR type = 'DATE_COUNTDOWN') AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid)")
+    suspend fun allForAlarm(uid: String?): List<TimerItemEntity>
 
     /** 登录时孤儿入队上传用：只取无主行，绝不取已归属行（否则陈旧副本会覆盖云端较新数据） */
     @Query("SELECT * FROM timer_item WHERE user_id IS NULL")
@@ -141,11 +144,11 @@ interface TimerDao {
 
 @Dao
 interface RecordDao {
-    @Query("SELECT * FROM timer_record WHERE deleted = 0 ORDER BY ended_at DESC")
-    fun observeAll(): Flow<List<TimerRecordEntity>>
+    @Query("SELECT * FROM timer_record WHERE deleted = 0 AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid) ORDER BY ended_at DESC")
+    fun observeAll(uid: String?): Flow<List<TimerRecordEntity>>
 
-    @Query("SELECT timer_id, ended_at, record_type, duration_sec FROM timer_record WHERE deleted = 0")
-    fun observeStatRows(): Flow<List<RecordStatRow>>
+    @Query("SELECT timer_id, ended_at, record_type, duration_sec FROM timer_record WHERE deleted = 0 AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid)")
+    fun observeStatRows(uid: String?): Flow<List<RecordStatRow>>
 
     @Query("SELECT * FROM timer_record WHERE id = :id")
     suspend fun byId(id: String): TimerRecordEntity?
@@ -155,8 +158,8 @@ interface RecordDao {
 
     @Upsert suspend fun upsert(t: TimerRecordEntity)
 
-    @Query("SELECT * FROM timer_record WHERE timer_id = :timerId AND deleted = 0 AND ended_at >= :since ORDER BY ended_at DESC")
-    suspend fun ofTimerSince(timerId: String, since: Long): List<TimerRecordEntity>
+    @Query("SELECT * FROM timer_record WHERE timer_id = :timerId AND deleted = 0 AND ended_at >= :since AND (:uid IS NULL OR user_id IS NULL OR user_id = :uid) ORDER BY ended_at DESC")
+    suspend fun ofTimerSince(timerId: String, since: Long, uid: String?): List<TimerRecordEntity>
 
     @Query("UPDATE timer_record SET user_id = :uid WHERE user_id IS NULL")
     suspend fun adoptOrphans(uid: String)

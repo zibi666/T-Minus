@@ -70,21 +70,29 @@ class TimeMarkApp : Application() {
     }
 
     private suspend fun hasRunning(): Boolean = runCatching {
-        container.db.timerDao().runningAll().any { it.type != Types.DATE }
+        container.db.timerDao().runningAll(container.auth.uid()).any { it.type != Types.DATE }
     }.getOrDefault(false)
 
     /** 前台服务只在「有可运行计时在跑」时存在；启停都必须包异常：
      *  Android 12+ 从后台启动前台服务会抛 ForegroundServiceStartNotAllowedException，
-     *  未捕获会直接杀掉进程（本类 appScope 之外的调用点尤其危险）。 */
+     *  未捕获会直接杀掉进程（本类 appScope 之外的调用点尤其危险）。
+     *  启动失败后进入退避期，避免每 2~15s 无意义重试浪费电量（后台时闹钟链仍会正常触发结算）。 */
+    private var fgsRetryAfterMs: Long = 0L
     private suspend fun manageService(running: Boolean) {
+        val now = System.currentTimeMillis()
         try {
             if (running && !serviceRunning) {
+                if (now < fgsRetryAfterMs) return // 处于退避期，本轮不重试
                 startForegroundService(Intent(this, TimerService::class.java))
+                fgsRetryAfterMs = 0L
             } else if (!running && serviceRunning) {
                 stopService(Intent(this, TimerService::class.java))
+                fgsRetryAfterMs = 0L
             }
         } catch (e: Exception) {
             android.util.Log.w("TimeMarkApp", "前台服务启停被拒", e)
+            // 退避 60s 后再试：避免后台环境下每拍都抛异常刷屏日志与耗电
+            fgsRetryAfterMs = now + FGS_RETRY_BACKOFF_MS
         }
     }
 
@@ -102,6 +110,8 @@ class TimeMarkApp : Application() {
         private const val SYNC_BEAT_MS = 4_000L
         private const val IDLE_SYNC_BEAT_MS = 20_000L
         private const val MAX_BACKOFF_MS = 120_000L
+        /** 前台服务启动失败后的退避时长：避免后台受限时每拍都抛异常 */
+        private const val FGS_RETRY_BACKOFF_MS = 60_000L
 
         @Volatile var serviceRunning = false
     }
