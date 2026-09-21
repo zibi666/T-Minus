@@ -1,5 +1,5 @@
 {
-  "version": "0.5.1",
+  "version": "0.6.0",
   "url": "https://github.com/zibi666/T-Minus/releases",
-  "notes": "跨端契约单一来源（番茄钟长休息落位修正·双端表驱动一致性测试）· 番茄钟统计改由已同步记录派生（跨端一致）· 秒表单调时钟守卫 · 结束/重置语义统一 · 同步配置回显与远程变更实时刷新"
+  "notes": "HTTPS 加密同步上线（Let's Encrypt 公信证书·sync.knowhub.chat:18443）· 修复鸿蒙日期选择器可选无效日期 · 三端编辑计时禁止改类型（防运行态静默丢失）· 三端年份范围统一 · 鸿蒙提醒清理与 run_json 精简 · Android 前台服务竞态与退避 · Windows tick 性能优化"
 }

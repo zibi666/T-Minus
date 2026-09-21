@@ -14,7 +14,7 @@ android {
         applicationId = "com.timemark.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
+        versionCode = 5
         // 版本号唯一来源：仓库根 VERSION（与 Windows package.json / latest.json 同步）
         versionName = rootProject.extra["appVersion"] as String
     }
