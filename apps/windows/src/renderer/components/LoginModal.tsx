@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { IconClose } from './icons';
 
-const SYNC_SERVER = 'http://118.195.133.25:18080';
+// 服务地址实际由主进程 syncClient.ts 的 DEFAULT_SERVER 决定（setServer 会忽略此传入值），
+// 这里仅为占位，保持与生产地址一致以免误导（真正的单一来源在 syncClient.ts）。
+const SYNC_SERVER = 'https://sync.knowhub.chat:18443';
 
 export default function LoginModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');

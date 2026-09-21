@@ -1,22 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  现状：同步服务是明文 HTTP（裸 IP），这里为该地址单独放行 cleartext，其余域名一律禁止。
-  上 HTTPS 后（deploy/TLS-CUTOVER.md 第 3 节）：删掉下面的 domain-config 即可恢复系统默认策略。
-  走自签根 CA（方案 B）时：解开 trust-anchors 注释，并把导出的根证书放到 res/raw/timemark_ca.pem。
+  同步服务：https://sync.knowhub.chat:18443
+  证书：Let's Encrypt（DNS-01 验证，公信 CA）
+  系统内置信任链自动验证，无需 trust-anchors 覆盖。
+
+  base-config 禁止明文流量：任何走 http:// 的意外降级都会被系统直接拒绝。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
-
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">118.195.133.25</domain>
-    </domain-config>
-
-    <!--
-    <debug-overrides>
-        <trust-anchors>
-            <certificates src="@raw/timemark_ca" />
-            <certificates src="system" />
-        </trust-anchors>
-    </debug-overrides>
-    -->
 </network-security-config>
