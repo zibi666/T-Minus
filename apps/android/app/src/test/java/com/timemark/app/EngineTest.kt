@@ -149,6 +149,33 @@ class EngineTest {
     }
 
     @Test
+    fun date_dday_fire_day_matches_days_left() {
+        // Alarms.dueAt 的 DATE 到点必须与 daysLeft() 同口径：includeToday 时目标日当天还剩 1 天，
+        // 归零发生在次日 00:00。闹钟若排到目标日 00:00，AlarmReceiver 的 left<=0 判空跑，
+        // 之后 nextDue() 又因 due<=now 永久跳过 → include_today=true 的 D-Day 提醒静默消失
+        val base = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val target = base.plusDays(10)
+        assertEquals(target, Engine.dDayFireDate(target.toString(), false))
+        assertEquals(target.plusDays(1), Engine.dDayFireDate(target.toString(), true))
+        assertEquals(null, Engine.dDayFireDate("not-a-date", false))
+
+        // 不变量：到点日当天（按该时区的 now）daysLeft 必须 <= 0，前一天必须 > 0
+        for (include in listOf(false, true)) {
+            val fire = Engine.dDayFireDate(target.toString(), include)!!
+            val atFire = fire.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val dayBefore = fire.minusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            assertTrue(
+                "到点日当天应已归零（includeToday=$include）",
+                (Engine.daysLeft(target.toString(), null, include, atFire) ?: 1L) <= 0L
+            )
+            assertTrue(
+                "到点前一天应仍未归零（includeToday=$include）",
+                (Engine.daysLeft(target.toString(), null, include, dayBefore) ?: 0L) > 0L
+            )
+        }
+    }
+
+    @Test
     fun pomodoro_idle_shows_phase_from_run_json() {
         // 空闲态也按 run_json 留存阶段展示（与 Windows dto() 一致），他端重置后本端不会假装回到第 1 轮专注
         val run = """{"phase":"long_break","phase_ends_at":${now + 1000},"completed_focus":4}"""

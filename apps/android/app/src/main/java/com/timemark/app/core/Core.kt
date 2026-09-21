@@ -186,6 +186,17 @@ object Engine {
             if (includeToday) d + 1 else d
         } catch (e: Exception) { null }
     }
+
+    /** DATE 的提醒到点日：daysLeft 首次 <= 0 的那一天。
+     *  includeToday 时目标日当天还剩 1 天，归零发生在**次日** 00:00；直接把闹钟排到目标日 00:00
+     *  会让 AlarmReceiver 的 `left <= 0` 判空跑，之后 nextDue() 又因 `due <= now` 永远跳过它 ——
+     *  D-Day 提醒静默消失。这里把口径和 daysLeft() 绑在一起，两边不可能再各算一套。 */
+    fun dDayFireDate(targetDate: String, includeToday: Boolean): java.time.LocalDate? {
+        return try {
+            val target = java.time.LocalDate.parse(targetDate)
+            if (includeToday) target.plusDays(1) else target
+        } catch (e: Exception) { null }
+    }
 }
 
 object Fmt {

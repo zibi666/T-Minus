@@ -158,6 +158,7 @@ class SyncManager(private val c: AppContainer) {
             val resp = c.api.pull(authHeader(token), cursor, 500)
             if (resp.changes.isEmpty()) return
             var appliedMax = cursor
+            var blocked = false // 本页中途撞上未上传的本地操作
             for (ch in resp.changes) {
                 val rowId = (ch.payload?.get("id") as? JsonPrimitive)?.contentOrNull
                 if (ch.origin_device_id == deviceId) {
@@ -167,7 +168,7 @@ class SyncManager(private val c: AppContainer) {
                 // 本行还有未上传操作：游标只能停在它之前（连续前缀，§5.3）。同页后面更高级
                 // seq 的行本轮一并放弃——继续消费会让 appliedMax 越过被挡行，这条远端变更
                 // 从此永不再投递，该行将本地/服务端永久分叉
-                if (rowId != null && c.db.pendingOpDao().dirtyCount(ch.table_name, rowId) > 0) break
+                if (rowId != null && c.db.pendingOpDao().dirtyCount(ch.table_name, rowId) > 0) { blocked = true; break }
                 appliedMax = maxOf(appliedMax, ch.change_seq)
                 if (applyChange(ch) && ch.table_name == "timer_item" && rowId != null) {
                     c.repo.onRemoteApplied(rowId) // 作废本地单调基准，按远端段重落基
@@ -175,6 +176,7 @@ class SyncManager(private val c: AppContainer) {
             }
             if (c.auth.token() != token) return
             c.setPullCursor(appliedMax) // 只推进到「连续已消费」前缀（§5.3）
+            if (blocked) return // 撞挡即收工：游标停在挡前行，下一轮 sync 必然还是从这一页开始重取，再拉一页纯属浪费
             if (appliedMax == cursor) return // 整页都被挡住：等下一次 sync，不空转重取同一页
             if (!resp.has_more) return
         }
