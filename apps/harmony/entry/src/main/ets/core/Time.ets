@@ -77,3 +77,21 @@ export function daysLeft(targetDate: string, timezoneId: string | null, includeT
   const d = dayNumber(ty, tm, td) - dayNumber(cur[0], cur[1], cur[2]);
   return includeToday ? d + 1 : d;
 }
+
+/**
+ * DATE 的提醒到点时刻：daysLeft 首次 <= 0 的那天 00:00（按目标时区的墙钟）。
+ * includeToday 时目标日当天还剩 1 天，归零发生在**次日** 00:00；直接把提醒排到目标日 00:00
+ * 会让通知早发一天（内容还是「还剩 1 天」），与 Android Alarms.dueAt 同口径。
+ * 返回 null 表示 targetDate 不可解析。
+ */
+export function dDayFireMs(targetDate: string, timezoneId: string | null, includeToday: boolean): number | null {
+  const parts = targetDate.split('-');
+  if (parts.length !== 3) return null;
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null;
+  // Date.UTC 会自动处理 d+1 跨月/跨年
+  const day = Date.UTC(y, m - 1, includeToday ? d + 1 : d);
+  return day - tzOffsetOf(timezoneId ?? '');
+}

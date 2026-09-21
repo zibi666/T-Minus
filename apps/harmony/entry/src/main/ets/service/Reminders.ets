@@ -7,7 +7,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import notification from '@ohos.notification';
 import { TYPE_DATE, TYPE_PRECISE, isPomodoroConfig, numAt, parseConfig, strAt } from '../core/Contract';
 import { parseRun } from '../core/Engine';
-import { daysLeft, tzOffsetOf } from '../core/Time';
+import { daysLeft, dDayFireMs } from '../core/Time';
 import { LocalDb } from '../data/Db';
 import { AuthStore } from '../data/AuthStore';
 import { TimerItem } from '../data/Rows';
@@ -32,14 +32,11 @@ export class Reminders {
     if (t.type === TYPE_DATE) {
       const targetDate = strAt(cfg, 'target_date') ?? '';
       const tz = strAt(cfg, 'timezone_id') ?? '';
-      const parts = targetDate.split('-');
-      if (parts.length !== 3) return null;
-      const y = parseInt(parts[0], 10);
-      const m = parseInt(parts[1], 10);
-      const d = parseInt(parts[2], 10);
-      if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null;
-      // 目标日 00:00（按目标时区）——与 Android Alarms.dueAt 同口径
-      return Date.UTC(y, m - 1, d) - tzOffsetOf(tz);
+      const include = cfg !== null && cfg['include_today'] === true;
+      // daysLeft 归零那天 00:00（按目标时区）——与 Android Alarms.dueAt 同口径。
+      // 不能直接排目标日：include_today=true（可由 Android/Windows 同步过来）时那天还剩 1 天，
+      // 通知会早发一天且内容写「还剩 1 天」，之后 reschedule 又因 sec<=0 不再排它
+      return dDayFireMs(targetDate, tz, include);
     }
     if (t.run_state !== 'running') return null;
     const run = parseRun(t.run_json);
@@ -116,7 +113,9 @@ export class Reminders {
     const cfg = parseConfig(t.config_json);
     if (t.type === TYPE_DATE) {
       const tz = strAt(cfg, 'timezone_id');
-      const left = daysLeft(strAt(cfg, 'target_date') ?? '', tz, false, now);
+      // 用写入的 include_today，不能硬编码 false：否则提醒文案与列表页 dateText() 对不上
+      const include = cfg !== null && cfg['include_today'] === true;
+      const left = daysLeft(strAt(cfg, 'target_date') ?? '', tz, include, now);
       return left === null ? t.name : `${t.name} 还剩 ${left} 天`;
     }
     if (isPomodoroConfig(t.type, cfg)) {
