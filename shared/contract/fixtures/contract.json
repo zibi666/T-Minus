@@ -104,7 +104,8 @@
     { "name": "考研", "tag": "考研", "expect": "#A3E635" },
     { "name": "英语", "tag": "英语", "expect": "#F472B6" },
     { "name": "专注", "tag": "专注", "expect": "#FFB224" },
-    { "name": "单字符 a", "tag": "a", "expect": "#9381FF" }
+    { "name": "单字符 a", "tag": "a", "expect": "#9381FF" },
+    { "name": "增补平面代理对按 code unit 求和", "tag": "🔋", "expect": "#4DC9F0" }
   ],
   "record_id": [
     { "name": "番茄钟首轮专注", "timer_id": "11111111-2222-4333-8444-555555555555", "session_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "phase_key": "focus", "completed_focus": 0, "expect": "rec-e3ae98e1cf161f75" },

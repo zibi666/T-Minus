@@ -170,8 +170,10 @@ export function buildPomodoroConfig(pomo?: Partial<NormalizedPomodoro>): Record<
 }
 
 export function tagColorFor(name: string): string {
+  // 逐 UTF-16 code unit 求和：Android sumOf { it.code } / 鸿蒙 charCodeAt 都是码元遍历，
+  // 码点迭代会把增补平面字符（emoji）只算一次，同一名字三端会取到不同色
   let sum = 0;
-  for (const ch of [...name]) sum += ch.charCodeAt(0);
+  for (let i = 0; i < name.length; i++) sum += name.charCodeAt(i);
   return TAG_PALETTE[sum % TAG_PALETTE.length];
 }
 
