@@ -25,6 +25,13 @@ apps/harmony/local.properties
 # 会话临时产物（脚本落盘的中间输出，不是源码）
 *.log
 *.done
+
+# IDE 会话产物（Qoder 的审计画布与会话报告，不是源码）
+.qoder-credits/
+
+# 本机预览图（IDE 里看的截图/图标预览，无脚本引用）
+tools/launcher.png
+tools/icon-preview.png
 apps/windows/*.txt
 !apps/windows/README.md
 apps/android/*.txt
