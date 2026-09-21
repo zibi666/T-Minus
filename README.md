@@ -23,7 +23,7 @@ E:/T-Minus
 └── tools/                      # 版本校验、契约/引擎测试、图标生成、数据库脚本
 ```
 
-`server/`（Node + Express 开发版后端）已在 commit `9420e29` 移除出库，弃用；正式后端只有 `backend/`。
+`server/`（Node + Express 开发版后端）已连同本机 SDK / 构建产物一起从**全部历史**中移除（2026-09-21 filter-repo 瘦身，见 `docs/TimeMark-进度与待办-2026-09-21.md` §4.1），弃用；正式后端只有 `backend/`。
 
 各端 `Contract.ts` / `Contract.ets` / `Contract.kt` **逐字段镜像** `shared/contract/fixtures/contract.json`，由测试与 CI 保证一致——契约是所有计时语义的唯一裁决处。
 

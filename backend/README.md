@@ -119,4 +119,4 @@ ALTER TABLE change_log ADD INDEX idx_change_user (user_id, change_seq);
 ## 6. 与本地开发版（`server/`）的关系
 
 - 两版 API 契约一致，但**数据不互通**（各自独立库）。
-- Node 开发版已在 commit `9420e29` 移除出库，正式多端使用以本目录（Spring Boot + 云 MySQL）为唯一后端。
+- Node 开发版已连同本机 SDK / 构建产物一起从**全部历史**中移除（2026-09-21 filter-repo 瘦身，见 `docs/TimeMark-进度与待办-2026-09-21.md` §4.1），正式多端使用以本目录（Spring Boot + 云 MySQL）为唯一后端。

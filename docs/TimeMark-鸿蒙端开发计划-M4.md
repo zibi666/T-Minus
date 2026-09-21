@@ -63,7 +63,11 @@ MULTI_DEVICE_CONNECTION / VOIP / TASK_KEEPING`，**没有 TIMER**；`TASK_KEEPIN
 恢复点在下一次应用启动（`EntryAbility.onCreate → AppHolder.boot → Ticker.start`：补算 + 重排提醒 + 刷卡片/实况窗）。
 
 ### 3.3 明文 HTTP
-后端目前是 `http://118.195.133.25:18080`。鸿蒙网络栈会以 **2300997 Cleartext traffic not permitted** 拦截明文，
+> **2026-09-21 更新**：后端已切 HTTPS，本节结论已过时——对外地址改为 `https://sync.knowhub.chat:18443`
+> （Cloudflare DNS → `118.195.133.25`，nginx 18443 + Let's Encrypt 公信证书，见 `deploy/TLS-CUTOVER.md`）。
+> Android 侧 `network_security_config.xml` 已改为全局禁止 cleartext。以下为当时的判断过程，留作记录。
+
+后端当时是 `http://118.195.133.25:18080`。鸿蒙网络栈会以 **2300997 Cleartext traffic not permitted** 拦截明文，
 而 stage 模型的 `module.json5` **没有** Android `networkSecurityConfig` 那种按地址豁免的开关
 （`cleartextTraffic` 只存在于 FA 模型 `config.json` 的 deviceConfig）。
 `sync/Http.ets` 已把该错误码翻译成可读提示。**真机若同步失败，先给后端配 HTTPS**（唯一干净解）。

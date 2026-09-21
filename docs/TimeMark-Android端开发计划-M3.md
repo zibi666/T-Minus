@@ -1,7 +1,8 @@
 # TimeMark Android 端开发计划（M3）
 
 > 对齐《开发计划 v2》§3 计时规则 / §4 数据模型 / §5 同步协议 / §6 冲突策略 / §8 M3 里程碑。
-> 服务端已上线：`http://118.195.133.25:18080`（契约：/api/v1/auth/register·login、/api/v1/sync/pull·push）。
+> 服务端已上线：`https://sync.knowhub.chat:18443`（契约：/api/v1/auth/register·login、/api/v1/sync/pull·push）。
+> 2026-09-21 起由明文 `http://118.195.133.25:18080` 切为 HTTPS，详见 `deploy/TLS-CUTOVER.md`。
 > 参照实现：Windows 端 `apps/windows`（协议先行验证者）。
 
 ## 1. 目标与范围
@@ -22,7 +23,7 @@ M3 = 「Android 日常可用版」：四种计时类型 + 标签/置顶/收藏 +
 | 语言/UI | Kotlin 2.x + Jetpack Compose + Material 3 | 与 §1 决策一致 |
 | 本地库 | Room 2.7 | 实体对齐 §4，含通用同步列 |
 | 序列化 | kotlinx.serialization | `@SerialName` 对齐服务端 snake_case 字段 |
-| 网络 | Retrofit + OkHttp | Bearer JWT interceptor；**明文 HTTP 需 networkSecurityConfig 仅放行 118.195.133.25** |
+| 网络 | Retrofit + OkHttp | Bearer JWT interceptor；2026-09-21 切 HTTPS 后 `network_security_config.xml` 已改为**全局禁止 cleartext**（Let's Encrypt 公信 CA 走系统信任链，无需 trust-anchors） |
 | 凭据存储 | EncryptedSharedPreferences | JWT 与账号缓存 |
 | 后台 | Foreground Service + AlarmManager + WorkManager | 见 §5 闹钟策略 |
 | 小组件 | Glance (Compose) | M3.5 |
